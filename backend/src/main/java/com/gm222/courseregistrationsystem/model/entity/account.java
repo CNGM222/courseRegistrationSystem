@@ -2,6 +2,8 @@ package com.gm222.courseregistrationsystem.model.entity;
 
 import jakarta.persistence.*;
 import lombok.*;
+import org.springframework.data.annotation.CreatedDate;
+import org.springframework.data.annotation.LastModifiedDate;
 
 import java.time.LocalDateTime;
 
@@ -31,8 +33,9 @@ public class account {
     private final LocalDateTime locked_until;   //锁定到期
     private final long version;                 //版本
 
-    @Column(updatable = false)
+    @Column(updatable = false) @CreatedDate
     private final LocalDateTime created_at;     //创建时间
 
+    @LastModifiedDate
     private final LocalDateTime updated_at;     //更新时间
 }
