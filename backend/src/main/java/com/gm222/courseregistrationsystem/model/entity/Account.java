@@ -18,12 +18,11 @@ import java.time.LocalDateTime;
 @EqualsAndHashCode
 @EntityListeners(AuditingEntityListener.class) // 启用审计字段自动填充
 public class Account {
-    @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long id; // 主键，包装类型避免默认值冲突
+    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
 
     @Column(unique = true, nullable = false, length = 64)
-    private String username; // 用户名，唯一非空，业务层统一大小写
+    private String username;
 
     @Column(name = "password_hash", nullable = false, length = 255)
     private String passwordHash; // BCrypt密码摘要
@@ -39,7 +38,7 @@ public class Account {
     @Column(name = "locked_until")
     private LocalDateTime lockedUntil; // 账号锁定到期时间
 
-    @Version // 乐观锁注解
+    @Version
     private Long version; // 并发版本号
 
     @CreatedDate
