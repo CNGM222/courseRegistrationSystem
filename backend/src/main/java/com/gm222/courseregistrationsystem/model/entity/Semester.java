@@ -1,5 +1,6 @@
 package com.gm222.courseregistrationsystem.model.entity;
 
+import ch.qos.logback.classic.joran.sanity.IfNestedWithinSecondPhaseElementSC;
 import ch.qos.logback.core.LifeCycleManager;
 import ch.qos.logback.core.util.StringUtil;
 import jakarta.persistence.*;
@@ -45,7 +46,7 @@ public class Semester {
     @Column(length = 16)
     private String status;          // PREPARATION / OPEN / CLOSED
 
-    @OneToOne
+    @OneToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "active_snapshot_id")
     private CatalogSnapshot activeSnapshot;
 
