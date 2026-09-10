@@ -17,9 +17,8 @@ import java.time.LocalDateTime;
 @EqualsAndHashCode
 @EntityListeners(AuditingEntityListener.class)
 public class Student {
-    @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long id; // 主键
+    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
 
     // 一对一关联账号表，外键account_id唯一
     @OneToOne(fetch = FetchType.LAZY)
