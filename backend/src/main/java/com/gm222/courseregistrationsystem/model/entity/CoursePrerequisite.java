@@ -4,30 +4,33 @@ import jakarta.persistence.*;
 import lombok.*;
 
 @Entity
-@Table(name = "course_prerequisite")
+@Table(name = "course_prerequisite", indexes = {
+        @Index(name = "idx_prerequisite_reverse", columnList = "prerequisite_course_id")
+})
 @Setter
 @Getter
 @NoArgsConstructor
 @AllArgsConstructor
-@ToString
-@EqualsAndHashCode
-@IdClass(CoursePrerequisite.class)
+@ToString(onlyExplicitlyIncluded = true)
+@IdClass(CoursePrerequisiteId.class)
 public class CoursePrerequisite {
     @Id
-    @Column(name = "course_id")
+    @ToString.Include
+    @Column(name = "course_id", nullable = false)
     private Long courseId;
 
     @Id
-    @Column(name = "prerequisite_course_id")
+    @ToString.Include
+    @Column(name = "prerequisite_course_id", nullable = false)
     private Long prerequisiteCourseId;
 
     // 外键关联：当前课程
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "course_id", insertable = false, updatable = false)
+    @ManyToOne(fetch = FetchType.LAZY, optional = false)
+    @JoinColumn(name = "course_id", nullable = false, insertable = false, updatable = false)
     private Course course;
 
     // 外键关联：对应的先修课程
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "prerequisite_course_id", insertable = false, updatable = false)
+    @ManyToOne(fetch = FetchType.LAZY, optional = false)
+    @JoinColumn(name = "prerequisite_course_id", nullable = false, insertable = false, updatable = false)
     private Course prerequisiteCourse;
 }

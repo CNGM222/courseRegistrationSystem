@@ -1,12 +1,11 @@
 package com.gm222.courseregistrationsystem.model.entity;
 
-import ch.qos.logback.classic.joran.sanity.IfNestedWithinSecondPhaseElementSC;
-import ch.qos.logback.core.LifeCycleManager;
-import ch.qos.logback.core.util.StringUtil;
 import jakarta.persistence.*;
 import lombok.*;
-import org.springframework.data.jpa.domain.support.AuditingEntityListener;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 
 @Entity
@@ -15,46 +14,48 @@ import java.time.LocalDateTime;
 @Getter
 @NoArgsConstructor
 @AllArgsConstructor
-@ToString
-@EqualsAndHashCode
-@EntityListeners(AuditingEntityListener.class)
-public class Semester {
+@ToString(onlyExplicitlyIncluded = true)
+public class Semester extends AuditedEntity {
+    @ToString.Include
     @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(length = 32,unique = true)
+    @Column(length = 32, unique = true, nullable = false)
     private String code;
 
-    @Column(length = 100)
+    @Column(length = 100, nullable = false)
     private String name;
 
-    @Column(name = "start_date")
-    private LocalDateTime startDate;
+    @Column(name = "start_date", nullable = false)
+    private LocalDate startDate;
 
-    @Column(name = "end_date")
-    private LocalDateTime endDate;
+    @Column(name = "end_date", nullable = false)
+    private LocalDate endDate;
 
-    @Column(name = "registration_start")
+    @Column(name = "registration_start", nullable = false, columnDefinition = "DATETIME(3)")
     private LocalDateTime registrationStart;
 
-    @Column(name = "registration_end")
+    @Column(name = "registration_end", nullable = false, columnDefinition = "DATETIME(3)")
     private LocalDateTime registrationEnd;
 
-    @Column(name = "add_drop_end")
+    @Column(name = "add_drop_end", nullable = false, columnDefinition = "DATETIME(3)")
     private LocalDateTime addDropEnd;
 
-    @Column(length = 16)
-    private String status;          // PREPARATION / OPEN / CLOSED
+    @Column(length = 16, nullable = false)
+    private String status = "PREPARATION";          // PREPARATION / OPEN / CLOSED
 
     @OneToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "active_snapshot_id")
+    @JoinColumn(name = "active_snapshot_id", unique = true)
     private CatalogSnapshot activeSnapshot;
 
-    @Column(columnDefinition = "CHAR(3)")
-    private byte[] currency;
+    @JdbcTypeCode(SqlTypes.CHAR)
+    @Column(length = 3, columnDefinition = "CHAR(3)", nullable = false)
+    private String currency = "CNY";
 
-    private LocalDateTime closed_at;
+    @Column(name = "closed_at", columnDefinition = "DATETIME(3)")
+    private LocalDateTime closedAt;
 
     @Version
+    @Column(nullable = false)
     private Long version;
 }
