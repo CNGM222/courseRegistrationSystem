@@ -2,9 +2,6 @@ package com.gm222.courseregistrationsystem.model.entity;
 
 import jakarta.persistence.*;
 import lombok.*;
-import org.springframework.data.annotation.CreatedDate;
-import org.springframework.data.annotation.LastModifiedDate;
-import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 
 import java.time.LocalDateTime;
 
@@ -14,10 +11,9 @@ import java.time.LocalDateTime;
 @Setter
 @NoArgsConstructor
 @AllArgsConstructor
-@ToString
-@EqualsAndHashCode
-@EntityListeners(AuditingEntityListener.class) // 启用审计字段自动填充
-public class Account {
+@ToString(onlyExplicitlyIncluded = true)
+public class Account extends AuditedEntity {
+    @ToString.Include
     @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
@@ -30,22 +26,16 @@ public class Account {
     @Column(length = 16, nullable = false)
     private String role; // STUDENT / PROFESSOR / REGISTRAR
 
-    private Boolean enabled; // 是否允许登录
+    @Column(nullable = false)
+    private Boolean enabled = true; // 是否允许登录
 
-    @Column(name = "failed_attempts")
-    private Integer failedAttempts; // 登录失败次数
+    @Column(name = "failed_attempts", nullable = false)
+    private Integer failedAttempts = 0; // 登录失败次数
 
-    @Column(name = "locked_until")
+    @Column(name = "locked_until", columnDefinition = "DATETIME(3)")
     private LocalDateTime lockedUntil; // 账号锁定到期时间
 
     @Version
+    @Column(nullable = false)
     private Long version; // 并发版本号
-
-    @CreatedDate
-    @Column(name = "created_at", updatable = false)
-    private LocalDateTime createdAt; // 创建时间
-
-    @LastModifiedDate
-    @Column(name = "updated_at")
-    private LocalDateTime updatedAt; // 更新时间
 }
