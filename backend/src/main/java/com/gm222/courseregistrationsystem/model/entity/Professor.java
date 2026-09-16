@@ -2,9 +2,12 @@ package com.gm222.courseregistrationsystem.model.entity;
 
 import jakarta.persistence.*;
 import lombok.*;
+import org.jspecify.annotations.NonNull;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.LinkedHashSet;
+import java.util.Set;
 
 @Entity
 @Table(name = "professors")
@@ -47,4 +50,16 @@ public class Professor extends AuditedEntity {
     @Version
     @Column(nullable = false)
     private Long version; // 乐观锁并发版本号
+
+    @NonNull
+    @OneToMany(mappedBy = "professor")
+    private Set<CourseOffering> courseOfferings = new LinkedHashSet<>();
+
+    @NonNull
+    @OneToMany(mappedBy = "recordedBy")
+    private Set<Grade> grades = new LinkedHashSet<>();
+
+    @NonNull
+    @OneToMany(mappedBy = "professor")
+    private Set<ProfessorQualification> professorQualifications = new LinkedHashSet<>();
 }

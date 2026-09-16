@@ -2,8 +2,11 @@ package com.gm222.courseregistrationsystem.model.entity;
 
 import jakarta.persistence.*;
 import lombok.*;
+import org.jspecify.annotations.NonNull;
 
 import java.time.LocalDateTime;
+import java.util.LinkedHashSet;
+import java.util.Set;
 
 @Entity
 @Table(name = "accounts")
@@ -38,4 +41,18 @@ public class Account extends AuditedEntity {
     @Version
     @Column(nullable = false)
     private Long version; // 并发版本号
+
+    @NonNull
+    @OneToMany(mappedBy = "actorAccount")
+    private Set<AuditLog> auditLogs = new LinkedHashSet<>();
+
+    @OneToOne(mappedBy = "account")
+    private Professor professor;
+
+    @NonNull
+    @OneToMany(mappedBy = "registrarAccount")
+    private Set<RegistrationClose> registrationCloses = new LinkedHashSet<>();
+
+    @OneToOne(mappedBy = "account")
+    private Student student;
 }

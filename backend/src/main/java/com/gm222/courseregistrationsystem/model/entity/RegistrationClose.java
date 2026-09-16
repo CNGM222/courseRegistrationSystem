@@ -5,11 +5,14 @@ import lombok.*;
 import org.hibernate.annotations.Immutable;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
+import org.jspecify.annotations.NonNull;
 import org.springframework.data.annotation.CreatedDate;
 import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 
 import java.time.LocalDateTime;
+import java.util.LinkedHashSet;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 @Entity
@@ -48,4 +51,8 @@ public class RegistrationClose {
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(nullable = false, columnDefinition = "JSON")
     private Map<String, Object> summary;
+
+    @NonNull
+    @OneToMany(mappedBy = "registrationClose")
+    private Set<BillingInvoice> billingInvoices = new LinkedHashSet<>();
 }

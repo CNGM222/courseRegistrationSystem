@@ -4,9 +4,12 @@ import jakarta.persistence.*;
 import lombok.*;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
+import org.jspecify.annotations.NonNull;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.LinkedHashSet;
+import java.util.Set;
 
 @Entity
 @Table(name = "semester")
@@ -58,4 +61,23 @@ public class Semester extends AuditedEntity {
     @Version
     @Column(nullable = false)
     private Long version;
+
+    @NonNull
+    @OneToMany(mappedBy = "semester")
+    private Set<BillingInvoice> billingInvoices = new LinkedHashSet<>();
+
+    @NonNull
+    @OneToMany(mappedBy = "semester")
+    private Set<CatalogSnapshot> catalogSnapshots = new LinkedHashSet<>();
+
+    @NonNull
+    @OneToMany(mappedBy = "semester")
+    private Set<CourseOffering> courseOfferings = new LinkedHashSet<>();
+
+    @OneToOne(mappedBy = "semester")
+    private RegistrationClose registrationClose;
+
+    @NonNull
+    @OneToMany(mappedBy = "semester")
+    private Set<Schedule> schedules = new LinkedHashSet<>();
 }

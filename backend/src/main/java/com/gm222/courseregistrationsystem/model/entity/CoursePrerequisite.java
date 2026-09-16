@@ -14,6 +14,9 @@ import lombok.*;
 @ToString(onlyExplicitlyIncluded = true)
 @IdClass(CoursePrerequisiteId.class)
 public class CoursePrerequisite {
+    @EmbeddedId
+    private CoursePrerequisiteId id;
+
     @Id
     @ToString.Include
     @Column(name = "course_id", nullable = false)

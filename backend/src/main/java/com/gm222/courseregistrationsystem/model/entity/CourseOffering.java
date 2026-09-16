@@ -4,8 +4,11 @@ import jakarta.persistence.*;
 import lombok.*;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
+import org.jspecify.annotations.NonNull;
 
 import java.math.BigDecimal;
+import java.util.LinkedHashSet;
+import java.util.Set;
 
 @Entity
 @Table(name = "course_offering",
@@ -83,4 +86,20 @@ public class CourseOffering extends AuditedEntity {
     @Version
     @Column(nullable = false)
     private Long version;
+
+    @NonNull
+    @OneToMany(mappedBy = "offering")
+    private Set<BillingInvoiceItem> billingInvoiceItems = new LinkedHashSet<>();
+
+    @NonNull
+    @OneToMany(mappedBy = "offering")
+    private Set<Enrollment> enrollments = new LinkedHashSet<>();
+
+    @NonNull
+    @OneToMany(mappedBy = "offering")
+    private Set<OfferingMeeting> offeringMeetings = new LinkedHashSet<>();
+
+    @NonNull
+    @OneToMany(mappedBy = "offering")
+    private Set<ScheduleChoice> scheduleChoices = new LinkedHashSet<>();
 }

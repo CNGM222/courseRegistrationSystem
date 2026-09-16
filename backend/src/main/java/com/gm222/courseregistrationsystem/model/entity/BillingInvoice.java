@@ -5,11 +5,14 @@ import lombok.*;
 import org.hibernate.annotations.Immutable;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
+import org.jspecify.annotations.NonNull;
 import org.springframework.data.annotation.CreatedDate;
 import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.LinkedHashSet;
+import java.util.Set;
 
 @Entity
 @Immutable
@@ -57,4 +60,12 @@ public class BillingInvoice {
     @CreatedDate
     @Column(name = "created_at", nullable = false, updatable = false, columnDefinition = "DATETIME(3)")
     private LocalDateTime createdAt;
+
+    @NonNull
+    @OneToMany(mappedBy = "invoice")
+    private Set<BillingInvoiceItem> billingInvoiceItems = new LinkedHashSet<>();
+
+    @NonNull
+    @OneToMany(mappedBy = "invoice")
+    private Set<OutboxEvent> outboxEvents = new LinkedHashSet<>();
 }

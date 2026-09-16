@@ -19,6 +19,9 @@ import java.time.LocalDateTime;
 @AllArgsConstructor
 @ToString(onlyExplicitlyIncluded = true)
 public class ProfessorQualification {
+    @EmbeddedId
+    private ProfessorQualificationId id;
+
     @Id
     @ToString.Include
     @Column(name = "professor_id", nullable = false)

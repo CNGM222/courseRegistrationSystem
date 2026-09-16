@@ -2,8 +2,11 @@ package com.gm222.courseregistrationsystem.model.entity;
 
 import jakarta.persistence.*;
 import lombok.*;
+import org.jspecify.annotations.NonNull;
 
 import java.time.LocalDateTime;
+import java.util.LinkedHashSet;
+import java.util.Set;
 
 @Entity
 @Table(name = "schedule", uniqueConstraints = {
@@ -49,4 +52,15 @@ public class Schedule extends AuditedEntity {
     @Version
     @Column(nullable = false)
     private Long version;
+
+    @OneToOne(mappedBy = "schedule")
+    private BillingInvoice billingInvoice;
+
+    @NonNull
+    @OneToMany(mappedBy = "schedule")
+    private Set<Enrollment> enrollments = new LinkedHashSet<>();
+
+    @NonNull
+    @OneToMany(mappedBy = "schedule")
+    private Set<ScheduleChoice> scheduleChoices = new LinkedHashSet<>();
 }

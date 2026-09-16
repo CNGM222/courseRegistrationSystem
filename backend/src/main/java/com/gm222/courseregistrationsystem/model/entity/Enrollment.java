@@ -51,4 +51,7 @@ public class Enrollment {
     @LastModifiedDate
     @Column(name = "updated_at", nullable = false, columnDefinition = "DATETIME(3)")
     private LocalDateTime updatedAt;
+
+    @OneToOne(mappedBy = "enrollment")
+    private Grade grade;
 }
