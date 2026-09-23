@@ -316,12 +316,12 @@ getRoster(CurrentActor actor, Long offeringId) : RosterView
 ```text
 updateBatch(CurrentActor actor, Long offeringId, List<GradeEntry> entries)
   : GradeBatchResult
-record GradeEntry(Long enrollmentId, String grade, long expectedVersion) {}
+record GradeEntry(Long enrollmentId, String grade, Long expectedVersion) {}
 ```
 
 服务确认教师实际任课、学期已结束且状态 CLOSED；每条 enrollment 必须属于该班并为 ENROLLED。成绩只接受 A/B/C/D/F/I，省略的条目不变，`null` 不表示清除。按 enrollmentId 升序锁注册记录，逐条校验 expectedVersion 后创建或更新 Grade，任一冲突或非法值使整批回滚并审计成功/失败结果。
 
-设计中“未录入 expectedVersion=0”和 JPA 新 Grade `@Version=0` 存在首次写入歧义。实现前应在 API 契约中区分“无 Grade 行”和“已有行 version=0”（推荐使用存在标记或不透明 ETag）；在契约统一前不要仅靠行锁判定过期。
+成绩版本契约采用：无 Grade 行时返回 `grade=null, version=null`，新增请求携带 `expectedVersion=null`；已有 Grade 行时使用真实版本号（包括 0）。在锁内检查存在性及版本；请求预期不存在而实际已存在时返回 412，禁止覆盖。具体请求与响应见《06-前端接口契约与验收说明》。
 
 ### 8.2 ReportCardService
 
