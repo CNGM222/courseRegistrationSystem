@@ -1,16 +1,9 @@
 package com.gm222.courseregistrationsystem.model.dto;
 
-import lombok.AllArgsConstructor;
-import lombok.Getter;
-import lombok.NoArgsConstructor;
-import lombok.Setter;
+import com.gm222.courseregistrationsystem.web.RequestIds;
 
-@NoArgsConstructor
-@AllArgsConstructor
-@Setter
-@Getter
-public class ApiResponse<T> {
-    private String code;
-    private String msg;
-    private T data;
+public record ApiResponse<T>(T data, String requestId) {
+  public static <T> ApiResponse<T> of(T data) {
+    return new ApiResponse<>(data, RequestIds.current());
+  }
 }

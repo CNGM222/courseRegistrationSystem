@@ -1,0 +1,24 @@
+[
+  {
+    "semesterCode": "DEMO-CURRENT", "sourceVersion": "synthetic-demo-v1",
+    "courses": [
+      {"legacyId":"CS101","code":"CS101","name":"程序设计基础","department":"计算机学院","credits":3.0,"prerequisites":[]},
+      {"legacyId":"CS102","code":"CS102","name":"计算机导论","department":"计算机学院","credits":3.0,"prerequisites":[]},
+      {"legacyId":"MA101","code":"MA101","name":"高等数学","department":"数学学院","credits":4.0,"prerequisites":[]},
+      {"legacyId":"EN101","code":"EN101","name":"大学英语","department":"外国语学院","credits":2.0,"prerequisites":[]},
+      {"legacyId":"PH101","code":"PH101","name":"大学物理","department":"物理学院","credits":3.0,"prerequisites":[]},
+      {"legacyId":"CS103","code":"CS103","name":"软件工程导论","department":"计算机学院","credits":3.0,"prerequisites":[]},
+      {"legacyId":"CS201","code":"CS201","name":"数据结构","department":"计算机学院","credits":3.0,"prerequisites":["CS101"]}
+    ],
+    "offerings": [
+      {"legacyId":"CS101-01","courseLegacyId":"CS101","sectionCode":"01","tuition":"600.00","currency":"CNY","meetings":[{"weekNo":1,"weekday":1,"startPeriod":1,"endPeriodExclusive":3,"room":"教学楼101"}]},
+      {"legacyId":"CS102-01","courseLegacyId":"CS102","sectionCode":"01","tuition":"600.00","currency":"CNY","meetings":[{"weekNo":1,"weekday":2,"startPeriod":1,"endPeriodExclusive":3,"room":"教学楼102"}]},
+      {"legacyId":"MA101-01","courseLegacyId":"MA101","sectionCode":"01","tuition":"800.00","currency":"CNY","meetings":[{"weekNo":1,"weekday":3,"startPeriod":1,"endPeriodExclusive":3,"room":"教学楼103"}]},
+      {"legacyId":"EN101-01","courseLegacyId":"EN101","sectionCode":"01","tuition":"400.00","currency":"CNY","meetings":[{"weekNo":1,"weekday":4,"startPeriod":1,"endPeriodExclusive":3,"room":"教学楼104"}]},
+      {"legacyId":"PH101-01","courseLegacyId":"PH101","sectionCode":"01","tuition":"600.00","currency":"CNY","meetings":[{"weekNo":1,"weekday":5,"startPeriod":1,"endPeriodExclusive":3,"room":"教学楼105"}]},
+      {"legacyId":"CS103-01","courseLegacyId":"CS103","sectionCode":"01","tuition":"600.00","currency":"CNY","meetings":[{"weekNo":1,"weekday":1,"startPeriod":4,"endPeriodExclusive":6,"room":"教学楼106"}]},
+      {"legacyId":"CS201-01","courseLegacyId":"CS201","sectionCode":"01","tuition":"600.00","currency":"CNY","meetings":[{"weekNo":1,"weekday":2,"startPeriod":4,"endPeriodExclusive":6,"room":"教学楼107"}]}
+    ],
+    "qualifications": []
+  }
+]
