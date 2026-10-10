@@ -68,7 +68,8 @@ export function meetsText(meetings: Meeting[]) {
   )
 }
 export function choiceIds(s: Schedule | null, kind: 'PRIMARY' | 'ALTERNATE') {
-  return [...(s?.draftChoices || s?.submittedChoices || [])]
+  const choices = s?.draftRevision != null ? s.draftChoices : s?.submittedChoices || []
+  return [...choices]
     .filter((c) => c.kind === kind)
     .sort((a, b) => a.priority - b.priority)
     .map((c) => c.offeringId)

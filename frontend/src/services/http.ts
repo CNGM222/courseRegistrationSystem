@@ -62,6 +62,7 @@ export async function request<T>(
       /* Proxy errors must not be rendered as HTML. */
     }
     if (!response.ok) {
+      if (response.status === 403 && body?.code === 'CSRF_INVALID') clearCsrf()
       if (response.status === 401 && path !== '/auth/login')
         window.dispatchEvent(new Event('crs:unauthorized'))
       throw new HttpError(
@@ -71,7 +72,7 @@ export async function request<T>(
           : { message: `服务暂不可用（${response.status}），请重试或联系管理员` },
       )
     }
-    if (response.status !== 204 && (!body || !('data' in body)))
+    if (response.status !== 204 && (!body || typeof body !== 'object' || !('data' in body)))
       throw new HttpError(502, { message: '服务器响应格式无效，请联系管理员' })
     return { data: body?.data as T, etag: response.headers.get('ETag') || undefined }
   } catch (error) {

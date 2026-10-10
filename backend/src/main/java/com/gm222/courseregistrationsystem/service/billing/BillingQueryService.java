@@ -38,11 +38,11 @@ public class BillingQueryService {
     var rows =
         db.page(
             OutboxEvent.class,
-            "select e" + where + " order by e.nextAttemptAt,e.eventId",
+            "select e from OutboxEvent e" + where + " order by e.nextAttemptAt,e.eventId",
             p,
             page,
             size);
-    var total = db.count("select count(e)" + where, p);
+    var total = db.count("select count(e) from OutboxEvent e" + where, p);
     return new Page<>(
         rows.stream()
             .map(
@@ -53,7 +53,7 @@ public class BillingQueryService {
                         e.getInvoice().getStudent().getName(),
                         e.getState(),
                         e.getAttempts(),
-                        BusinessTime.iso(e.getNextAttemptAt()),
+                        "DELIVERED".equals(e.getState()) ? null : BusinessTime.iso(e.getNextAttemptAt()),
                         e.getLastError(),
                         BusinessTime.iso(e.getDeliveredAt())))
             .toList(),

@@ -96,6 +96,8 @@ class ApiSecurityTests {
         .andExpect(jsonPath("$.data.username").value(username));
     mvc.perform(get("/api/v1/registrar/students").cookie(session))
         .andExpect(status().isForbidden());
+    mvc.perform(get("/api/v1/registrar/semesters/1/offerings/1/roster").cookie(session))
+        .andExpect(status().isForbidden());
     mvc.perform(get("/api/v1/professors/me/teaching/1").cookie(session))
         .andExpect(status().isForbidden());
     mvc.perform(post("/api/v1/auth/logout").cookie(session).with(csrf()))

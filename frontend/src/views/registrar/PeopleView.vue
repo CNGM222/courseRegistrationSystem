@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
 import { api } from '../../services/api'
 import { HttpError } from '../../services/http'
@@ -21,6 +21,7 @@ const visible = ref(false),
   editing = ref<PersonRecord | null>(null),
   formRef = ref<FormInstance>(),
   blocked = ref(false),
+  listNeedsVerification = ref(false),
   baseline = ref('')
 const form = reactive({
   username: '',
@@ -31,11 +32,39 @@ const form = reactive({
   department: '',
   socialSecurityNumber: '',
 })
+type PersonField = keyof typeof form
+const fieldErrors = reactive<Partial<Record<PersonField, string>>>({})
+function clearFieldErrors() {
+  for (const field of Object.keys(fieldErrors) as PersonField[]) delete fieldErrors[field]
+}
+function showFieldErrors(e: unknown) {
+  if (!(e instanceof HttpError) || !Array.isArray(e.details)) return
+  for (const detail of e.details) {
+    if (
+      detail &&
+      typeof detail === 'object' &&
+      'field' in detail &&
+      'message' in detail &&
+      typeof detail.field === 'string' &&
+      typeof detail.message === 'string' &&
+      Object.hasOwn(form, detail.field)
+    )
+      fieldErrors[detail.field as PersonField] = detail.message
+  }
+}
+for (const field of Object.keys(form) as PersonField[])
+  watch(
+    () => form[field],
+    () => {
+      delete fieldErrors[field]
+      if (!blocked.value) formError.value = null
+    },
+  )
 const dirty = computed(() => visible.value && JSON.stringify(form) !== baseline.value)
 const { confirmLeave } = useDirtyGuard(dirty)
 const rules: FormRules = {
   username: [
-    { required: true, message: '请输入登录账号', trigger: 'blur' },
+    { required: true, whitespace: true, message: '请输入登录账号', trigger: 'blur' },
     { min: 1, max: 64, message: '账号不能超过 64 个字符', trigger: 'blur' },
   ],
   name: [
@@ -77,6 +106,7 @@ const rules: FormRules = {
 let generation = 0,
   active = true
 async function load() {
+  if (!active) return
   const token = ++generation
   loading.value = true
   error.value = null
@@ -85,8 +115,15 @@ async function load() {
       ? api.registrar.students(page.value, 20, keyword.value.trim())
       : api.registrar.professors(page.value, 20, keyword.value.trim()))
     if (token === generation) {
+      const lastPage = Math.max(1, Math.ceil(data.total / 20))
+      if (page.value > lastPage) {
+        page.value = lastPage
+        await load()
+        return
+      }
       items.value = data.items
       total.value = data.total
+      listNeedsVerification.value = false
     }
   } catch (e) {
     if (token === generation) error.value = e
@@ -102,6 +139,7 @@ function fill(person: PersonRecord | null) {
   editing.value = person
   formError.value = null
   blocked.value = false
+  clearFieldErrors()
   Object.assign(form, {
     username: person?.username || '',
     name: person?.name || '',
@@ -116,6 +154,7 @@ function fill(person: PersonRecord | null) {
   formRef.value?.clearValidate()
 }
 async function edit(person: PersonRecord) {
+  if (busy.value) return
   error.value = null
   busy.value = true
   try {
@@ -137,7 +176,8 @@ async function closeForm(done?: () => void) {
   }
 }
 async function submit() {
-  if (busy.value || blocked.value) return
+  if (busy.value || blocked.value || listNeedsVerification.value) return
+  clearFieldErrors()
   if (!(await formRef.value?.validate().catch(() => false))) return
   const data: Record<string, unknown> = {
     name: form.name.trim(),
@@ -166,13 +206,16 @@ async function submit() {
     form.socialSecurityNumber = ''
     await load()
   } catch (e) {
+    if (!active) return
     formError.value = e
+    showFieldErrors(e)
     if (e instanceof HttpError && [0, 412].includes(e.status)) blocked.value = true
   } finally {
     busy.value = false
   }
 }
 async function remove(person: PersonRecord) {
+  if (busy.value || listNeedsVerification.value) return
   try {
     await ElMessageBox.confirm(
       `删除${noun.value}“${person.name}”（ID：${person.id}）将停用账号。存在当前关联时系统会拒绝删除，历史资料继续保留。`,
@@ -190,17 +233,58 @@ async function remove(person: PersonRecord) {
     ElMessage.success('已删除并停用账号')
     await load()
   } catch (e) {
-    error.value = e
+    if (active) {
+      error.value = e
+      if (e instanceof HttpError && [0, 412].includes(e.status)) listNeedsVerification.value = true
+    }
   } finally {
     busy.value = false
   }
 }
 onMounted(load)
+watch(
+  () => props.kind,
+  () => {
+    // The same view is mounted for both registrar routes in some shells. Reset
+    // list and editor state before loading the newly selected kind so records
+    // from the previous route cannot remain visible during the request.
+    generation++
+    page.value = 1
+    items.value = []
+    total.value = 0
+    keyword.value = ''
+    error.value = null
+    listNeedsVerification.value = false
+    if (visible.value) {
+      visible.value = false
+      editing.value = null
+      form.socialSecurityNumber = ''
+    }
+    void load()
+  },
+)
+watch(
+  () => form.birthDate,
+  () => {
+    if (visible.value && props.kind === 'students' && form.graduationDate)
+      void formRef.value?.validateField('graduationDate').catch(() => undefined)
+  },
+)
 onUnmounted(() => {
   active = false
   generation++
   form.socialSecurityNumber = ''
   items.value = []
+  editing.value = null
+  Object.assign(form, {
+    username: '',
+    name: '',
+    birthDate: '',
+    status: 'ACTIVE',
+    graduationDate: null,
+    department: '',
+    socialSecurityNumber: '',
+  })
 })
 </script>
 <template>
@@ -211,7 +295,7 @@ onUnmounted(() => {
     </div>
     <el-button
       type="primary"
-      :disabled="busy"
+      :disabled="busy || listNeedsVerification"
       @click="fill(null)"
       >新增{{ noun }}</el-button
     >
@@ -220,6 +304,13 @@ onUnmounted(() => {
     :error="error"
     retry
     @retry="load"
+  />
+  <el-alert
+    v-if="listNeedsVerification"
+    title="删除结果或资料版本尚未确认，请重新加载列表并核对后再操作。"
+    type="warning"
+    :closable="false"
+    show-icon
   />
   <section class="surface">
     <div class="surface-header">
@@ -295,13 +386,13 @@ onUnmounted(() => {
             ><el-button
               link
               type="primary"
-              :disabled="busy"
+              :disabled="busy || listNeedsVerification"
               @click="edit(row)"
               >编辑</el-button
             ><el-button
               link
               type="danger"
-              :disabled="busy"
+              :disabled="busy || listNeedsVerification"
               @click="remove(row)"
               >删除</el-button
             ></template
@@ -336,11 +427,13 @@ onUnmounted(() => {
       :rules="rules"
       label-position="top"
       :disabled="busy || blocked"
+      scroll-to-error
       @submit.prevent="submit"
       ><el-form-item
         v-if="!editing"
         label="登录账号"
         prop="username"
+        :error="fieldErrors.username"
         ><el-input
           v-model="form.username"
           maxlength="64"
@@ -356,12 +449,14 @@ onUnmounted(() => {
         <el-form-item
           label="姓名"
           prop="name"
+          :error="fieldErrors.name"
           ><el-input
             v-model="form.name"
             maxlength="100" /></el-form-item
         ><el-form-item
           label="出生日期"
           prop="birthDate"
+          :error="fieldErrors.birthDate"
           ><el-date-picker
             v-model="form.birthDate"
             type="date"
@@ -372,6 +467,7 @@ onUnmounted(() => {
         ><el-form-item
           label="状态"
           prop="status"
+          :error="fieldErrors.status"
           ><el-select v-model="form.status"
             ><el-option
               label="正常"
@@ -385,6 +481,7 @@ onUnmounted(() => {
           v-if="kind === 'students'"
           label="毕业日期（可空）"
           prop="graduationDate"
+          :error="fieldErrors.graduationDate"
           ><el-date-picker
             v-model="form.graduationDate"
             type="date"
@@ -396,6 +493,7 @@ onUnmounted(() => {
           v-else
           label="院系"
           prop="department"
+          :error="fieldErrors.department"
           ><el-input
             v-model="form.department"
             maxlength="100"
@@ -404,6 +502,7 @@ onUnmounted(() => {
       <el-form-item
         label="社会安全号码（可空）"
         prop="socialSecurityNumber"
+        :error="fieldErrors.socialSecurityNumber"
         ><el-input
           v-model="form.socialSecurityNumber"
           type="password"

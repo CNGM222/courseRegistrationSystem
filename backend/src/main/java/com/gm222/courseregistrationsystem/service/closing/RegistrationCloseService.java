@@ -310,12 +310,6 @@ public class RegistrationCloseService {
                   String.valueOf(m.get("status")),
                   Integer.parseInt(String.valueOf(m.get("enrolledCount"))),
                   String.valueOf(m.get("cancelReason"))));
-    int pending =
-        (int)
-            db.count(
-                "select count(e) from OutboxEvent e where e.invoice.semester.id=:s and"
-                    + " e.state<>'DELIVERED'",
-                Map.of("s", s.getId()));
     return new CloseResult(
         close.getRunId(),
         s.getId().toString(),
@@ -323,7 +317,7 @@ public class RegistrationCloseService {
         number(sum, "cancelledOfferings"),
         number(sum, "leveledSchedules"),
         number(sum, "billingEvents"),
-        pending,
+        number(sum, "pendingBillingEvents"),
         sum,
         list);
   }

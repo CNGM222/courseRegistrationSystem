@@ -5,10 +5,18 @@ import { api } from '../../services/api'
 import { HttpError } from '../../services/http'
 import { useSemesters } from '../../composables/useSemesters'
 import { dateTime, label } from '../../utils/format'
-import type { CloseResult, BillingEvent } from '../../types/api'
+import type { CloseResult, BillingEvent, RegistrarRoster } from '../../types/api'
 import ErrorNotice from '../../components/ErrorNotice.vue'
 import SemesterSelect from '../../components/SemesterSelect.vue'
-const { choices, selectedId, current, error: semesterError, load: reloadSemesters } = useSemesters()
+import EmptyState from '../../components/EmptyState.vue'
+const {
+  choices,
+  selectedId,
+  current,
+  error: semesterError,
+  loading: semesterLoading,
+  load: reloadSemesters,
+} = useSemesters()
 const result = ref<CloseResult | null>(null),
   events = ref<BillingEvent[]>([]),
   total = ref(0),
@@ -20,11 +28,24 @@ const result = ref<CloseResult | null>(null),
 const error = ref<unknown>(null),
   billingError = ref<unknown>(null),
   verified = ref(false),
+  uncertain = ref(false),
+  confirming = ref(false),
+  eventsUpdatedAt = ref<string | null>(null),
   now = ref(Date.now())
+const registrationStatus = computed(() => (result.value ? 'CLOSED' : current.value?.status))
+const rosterVisible = ref(false),
+  roster = ref<RegistrarRoster | null>(null),
+  rosterLoading = ref(false),
+  rosterError = ref<unknown>(null),
+  rosterOfferingId = ref(''),
+  rosterTitle = ref('')
 const canClose = computed(
   () =>
     verified.value &&
+    !result.value &&
+    !uncertain.value &&
     !semesterError.value &&
+    !semesterLoading.value &&
     current.value?.status === 'OPEN' &&
     now.value >= Date.parse(current.value.addDropEnd) &&
     !busy.value &&
@@ -32,23 +53,30 @@ const canClose = computed(
 )
 let generation = 0,
   billingGeneration = 0,
+  rosterGeneration = 0,
+  active = true,
   timer: ReturnType<typeof setInterval>,
   clock: ReturnType<typeof setInterval>
 async function loadEvents() {
-  if (!selectedId.value) return
+  if (!active || !selectedId.value || !result.value) return
   const token = ++billingGeneration
+  const semesterId = selectedId.value
   billingError.value = null
   billingLoading.value = true
   try {
-    const { data } = await api.registrar.billingEvents(
-      selectedId.value,
-      page.value,
-      20,
-      state.value,
-    )
+    const { data } = await api.registrar.billingEvents(semesterId, page.value, 20, state.value)
     if (token === billingGeneration) {
+      const lastPage = Math.max(1, Math.ceil(data.total / 20))
+      if (page.value > lastPage) {
+        page.value = lastPage
+        // Start a fresh request for the valid page. The generation guard keeps
+        // the stale response from replacing the corrected page.
+        void loadEvents()
+        return
+      }
       events.value = data.items
       total.value = data.total
+      eventsUpdatedAt.value = new Date().toISOString()
     }
   } catch (e) {
     if (token === billingGeneration) billingError.value = e
@@ -56,16 +84,49 @@ async function loadEvents() {
     if (token === billingGeneration) billingLoading.value = false
   }
 }
+async function loadRoster() {
+  if (!active || !result.value || !rosterOfferingId.value || !rosterVisible.value) return
+  const token = ++rosterGeneration
+  const semesterId = selectedId.value
+  const offeringId = rosterOfferingId.value
+  rosterLoading.value = true
+  rosterError.value = null
+  roster.value = null
+  try {
+    const { data } = await api.registrar.finalRoster(semesterId, offeringId)
+    if (token === rosterGeneration) roster.value = data
+  } catch (e) {
+    if (token === rosterGeneration) rosterError.value = e
+  } finally {
+    if (token === rosterGeneration) rosterLoading.value = false
+  }
+}
+function showRoster(offering: CloseResult['offerings'][number]) {
+  if (!result.value || offering.status !== 'CLOSED') return
+  rosterOfferingId.value = offering.offeringId
+  rosterTitle.value = `${offering.courseName} ${offering.sectionCode} 班 · 最终名单`
+  rosterVisible.value = true
+  void loadRoster()
+}
+function clearRoster() {
+  rosterGeneration++
+  rosterVisible.value = false
+  roster.value = null
+  rosterError.value = null
+  rosterLoading.value = false
+  rosterOfferingId.value = ''
+}
 async function loadResult() {
-  if (!selectedId.value) return
+  if (!active || !selectedId.value) return
   const token = ++generation
+  const semesterId = selectedId.value
   loading.value = true
   error.value = null
   verified.value = false
   try {
     let data: CloseResult | null
     try {
-      data = (await api.registrar.closeResult(selectedId.value)).data
+      data = (await api.registrar.closeResult(semesterId)).data
     } catch (e) {
       if (e instanceof HttpError && e.status === 404 && e.code === 'REGISTRATION_NOT_CLOSED')
         data = null
@@ -74,67 +135,114 @@ async function loadResult() {
     if (token !== generation) return
     result.value = data
     verified.value = true
+    uncertain.value = false
     if (data) await loadEvents()
+    else {
+      billingGeneration++
+      events.value = []
+      total.value = 0
+      eventsUpdatedAt.value = null
+      billingError.value = null
+      billingLoading.value = false
+    }
   } catch (e) {
-    if (token === generation) error.value = e
+    if (token === generation) {
+      error.value = e
+      // A failed lookup leaves the previously displayed result unverified.
+      // Do not allow a close operation until the result has been queried again.
+      verified.value = false
+      uncertain.value = true
+    }
   } finally {
     if (token === generation) loading.value = false
   }
 }
 async function refresh() {
+  if (busy.value || confirming.value) return
   await reloadSemesters()
+  if (semesterError.value) return
   await loadResult()
 }
 async function close() {
-  if (!canClose.value) return
+  if (!canClose.value || confirming.value) return
+  const semesterId = selectedId.value
+  const semesterName = current.value?.name
+  confirming.value = true
   try {
     await ElMessageBox.confirm(
-      `确认关闭“${current.value?.name}”注册？系统将取消无教师教学班、按备选顺序补位，再取消不足三人的班并生成最终计费课表。关闭后不能继续选退课或更改授课。`,
+      `确认关闭“${semesterName}”注册？系统将取消无教师教学班、按备选顺序补位，再取消不足三人的班并生成最终计费课表。关闭后不能继续选退课或更改授课。`,
       '关闭学期注册',
       { confirmButtonText: '确认关闭', cancelButtonText: '取消', type: 'warning' },
     )
   } catch {
     return
+  } finally {
+    confirming.value = false
   }
+  now.value = Date.now()
+  if (!active || semesterId !== selectedId.value || !canClose.value) return
   busy.value = true
   error.value = null
   try {
-    result.value = (await api.registrar.close(selectedId.value)).data
+    const { data } = await api.registrar.close(semesterId)
+    if (!active || selectedId.value !== semesterId) return
+    result.value = data
+    verified.value = true
+    uncertain.value = false
     ElMessage.success('注册已关闭，财务通知由系统持续投递')
     await reloadSemesters()
     await loadEvents()
   } catch (e) {
-    error.value = e
-    verified.value = false
+    if (active && selectedId.value === semesterId) {
+      error.value = e
+      verified.value = false
+      uncertain.value = e instanceof HttpError && [0, 502, 503, 504].includes(e.status)
+    }
   } finally {
     busy.value = false
   }
 }
 watch(selectedId, () => {
+  clearRoster()
   result.value = null
   events.value = []
+  total.value = 0
+  eventsUpdatedAt.value = null
+  billingError.value = null
+  billingLoading.value = false
+  uncertain.value = false
   billingGeneration++
   page.value = 1
   state.value = ''
   void loadResult()
 })
 watch(state, () => {
+  events.value = []
+  total.value = 0
+  eventsUpdatedAt.value = null
   page.value = 1
   void loadEvents()
 })
+function refreshVisibleEvents() {
+  if (!document.hidden && result.value && !busy.value && !billingLoading.value) void loadEvents()
+}
 onMounted(() => {
-  timer = setInterval(() => {
-    if (!document.hidden && result.value && !busy.value && !billingLoading.value) void loadEvents()
-  }, 10000)
+  timer = setInterval(refreshVisibleEvents, 10000)
+  document.addEventListener('visibilitychange', refreshVisibleEvents)
+  window.addEventListener('focus', refreshVisibleEvents)
   clock = setInterval(() => {
     now.value = Date.now()
   }, 1000)
 })
 onUnmounted(() => {
+  active = false
   generation++
   billingGeneration++
   clearInterval(timer)
+  clearRoster()
   clearInterval(clock)
+  document.removeEventListener('visibilitychange', refreshVisibleEvents)
+  window.removeEventListener('focus', refreshVisibleEvents)
 })
 </script>
 <template>
@@ -146,7 +254,7 @@ onUnmounted(() => {
     <SemesterSelect
       v-model="selectedId"
       :semesters="choices"
-      :disabled="busy"
+      :disabled="busy || confirming"
     />
   </div>
   <ErrorNotice
@@ -158,13 +266,18 @@ onUnmounted(() => {
     retry
     @retry="refresh"
   />
+  <EmptyState
+    v-if="!semesterLoading && !semesterError && !choices.length"
+    title="暂无学期"
+    description="学期数据建立后可查看注册和财务通知状态。"
+  />
   <div
     v-if="current"
     class="stats-grid"
   >
     <div class="surface stat-card">
       <div class="stat-label">学期注册</div>
-      <div class="stat-value">{{ label(current.status) }}</div>
+      <div class="stat-value">{{ label(registrationStatus) }}</div>
       <div class="stat-note">{{ current.name }}</div>
     </div>
     <div class="surface stat-card">
@@ -180,7 +293,9 @@ onUnmounted(() => {
     <div class="surface stat-card">
       <div class="stat-label">生成计费通知</div>
       <div class="stat-value">{{ result?.billingEvents ?? '—' }}</div>
-      <div class="stat-note">实际投递状态见下表</div>
+      <div class="stat-note">
+        关闭时待发送：{{ result?.pendingBillingEvents ?? '—' }}；当前送达状态见下表
+      </div>
     </div>
   </div>
   <section
@@ -191,7 +306,7 @@ onUnmounted(() => {
       <strong>注册控制</strong
       ><el-button
         :loading="loading"
-        :disabled="busy"
+        :disabled="busy || confirming"
         @click="refresh"
         >查询最新结果</el-button
       >
@@ -213,7 +328,7 @@ onUnmounted(() => {
           >{{ dateTime(result.closedAt) }}</el-descriptions-item
         ></el-descriptions
       ><el-alert
-        v-if="current.status !== 'CLOSED'"
+        v-if="registrationStatus !== 'CLOSED'"
         title="到加退课截止后方可关闭。正在执行的选课或授课变更会阻止本次关闭，可稍后重新查询并重试。"
         type="warning"
         :closable="false"
@@ -225,15 +340,23 @@ onUnmounted(() => {
         :closable="false"
         show-icon
       />
+      <el-alert
+        v-if="uncertain"
+        title="关闭请求的结果尚未确认。请点击“查询最新结果”核对；查询完成前不能再次关闭。"
+        type="warning"
+        :closable="false"
+        show-icon
+        style="margin-top: 12px"
+      />
       <div
         class="action-row"
         style="margin-top: 18px"
       >
         <el-button
-          v-if="current.status !== 'CLOSED'"
+          v-if="registrationStatus !== 'CLOSED'"
           type="danger"
           :loading="busy"
-          :disabled="!canClose"
+          :disabled="!canClose || confirming"
           @click="close"
           >关闭注册</el-button
         ><span
@@ -279,6 +402,24 @@ onUnmounted(() => {
           label="取消原因"
           min-width="145"
           ><template #default="{ row }">{{ label(row.cancelReason) }}</template></el-table-column
+        ><el-table-column
+          label="最终名单"
+          width="115"
+          fixed="right"
+          ><template #default="{ row }"
+            ><el-button
+              v-if="row.status === 'CLOSED'"
+              link
+              type="primary"
+              :aria-label="`查看${row.courseName}${row.sectionCode}班最终名单`"
+              @click="showRoster(row)"
+              >查看名单</el-button
+            ><span
+              v-else
+              class="muted"
+              >已取消</span
+            ></template
+          ></el-table-column
         ></el-table
       >
     </div>
@@ -288,7 +429,15 @@ onUnmounted(() => {
     v-if="result"
   >
     <div class="surface-header">
-      <strong>财务通知</strong>
+      <div>
+        <strong>财务通知</strong>
+        <p
+          class="tiny muted"
+          style="margin: 6px 0 0"
+        >
+          每 10 秒刷新；最近更新：{{ dateTime(eventsUpdatedAt) }}
+        </p>
+      </div>
       <div class="action-row">
         <el-select
           v-model="state"
@@ -322,6 +471,11 @@ onUnmounted(() => {
           label="事件 ID"
           min-width="230"
         /><el-table-column
+          prop="studentName"
+          label="学生姓名"
+          min-width="110"
+          ><template #default="{ row }">{{ row.studentName || '—' }}</template></el-table-column
+        ><el-table-column
           prop="studentId"
           label="学生 ID"
           min-width="110"
@@ -359,4 +513,42 @@ onUnmounted(() => {
       />
     </div>
   </section>
+  <el-dialog
+    v-model="rosterVisible"
+    :title="rosterTitle"
+    width="min(720px, 94vw)"
+    destroy-on-close
+    @close="clearRoster"
+  >
+    <ErrorNotice
+      :error="rosterError"
+      retry
+      @retry="loadRoster"
+    />
+    <p class="tiny muted">名单为关闭注册后的最终有效注册，包含主选及成功补位的备选。</p>
+    <el-table
+      v-if="!rosterError"
+      v-loading="rosterLoading"
+      :data="roster?.students || []"
+      empty-text="该教学班没有最终注册学生"
+    >
+      <el-table-column
+        prop="studentId"
+        label="学生 ID"
+        min-width="130"
+      />
+      <el-table-column
+        prop="studentName"
+        label="姓名"
+        min-width="140"
+      />
+      <el-table-column
+        label="注册来源"
+        min-width="120"
+      >
+        <template #default="{ row }">{{ label(row.source) }}</template>
+      </el-table-column>
+    </el-table>
+    <template #footer><el-button @click="clearRoster">关闭</el-button></template>
+  </el-dialog>
 </template>

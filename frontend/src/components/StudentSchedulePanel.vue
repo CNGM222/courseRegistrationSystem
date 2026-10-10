@@ -20,16 +20,22 @@ const schedule = ref<Schedule | null>(null),
   loading = ref(false)
 let generation = 0
 async function load() {
-  if (!selectedId.value) return
   const token = ++generation
-  loading.value = true
-  error.value = null
   schedule.value = null
+  error.value = null
+  if (!selectedId.value) {
+    loading.value = false
+    return
+  }
+  loading.value = true
   try {
     const res = await api.student.schedule(selectedId.value)
     if (token === generation) schedule.value = res.data
   } catch (e) {
-    if (token === generation && !(e instanceof HttpError && e.code === 'SCHEDULE_NOT_FOUND'))
+    if (
+      token === generation &&
+      !(e instanceof HttpError && e.status === 404 && e.code === 'SCHEDULE_NOT_FOUND')
+    )
       error.value = e
   } finally {
     if (token === generation) loading.value = false
@@ -71,10 +77,17 @@ onUnmounted(() => generation++)
     retry
     @retry="load"
   />
-  <div v-loading="loading || semesterLoading">
+  <el-skeleton
+    v-if="loading || semesterLoading"
+    class="surface"
+    :rows="5"
+    animated
+  />
+  <div v-else>
     <ScheduleDisplay
-      v-if="selectedId && !error"
+      v-if="selectedId && !error && !loading && !semesterLoading"
       :schedule="schedule"
+      :history="history"
     /><el-empty
       v-else-if="!semesterLoading && !semesterError && !choices.length"
       description="暂无可查看的学期"

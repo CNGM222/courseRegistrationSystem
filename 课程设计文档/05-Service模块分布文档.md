@@ -1,7 +1,7 @@
 # Service 模块分布与编码说明
 
-> 依据《03-设计文档》《02-需求分析文档》和当前 `backend` 实体映射整理。
-> 本文是编码蓝图：类名、方法和 DTO 可以在实现时微调，但业务规则、锁顺序、事务边界必须保持一致。
+> 依据《03-设计文档》《02-需求分析文档》和当前 `backend` 实现整理，2026-10-10 同步用户确认的名单权限。
+> 本文描述 Service 分工及业务约束；当前后端已有 Controller、Service 与实体映射。类名、方法和 DTO 可以在实现时微调，但业务规则、锁顺序、事务边界必须保持一致，实现存在不代表验收已经通过。
 
 ## 1. 适用范围
 
@@ -70,8 +70,8 @@ flowchart LR
 | people | Account、Student、Professor | Account、Student、Professor（档案字段） | 教务师生维护 |
 | catalog | Semester、CatalogSnapshot、Course、CoursePrerequisite、CourseOffering、OfferingMeeting、ProfessorQualification | 目录同步阶段的目录实体 | 学期/教学班查询、同步任务 |
 | registration | Semester、Student、Schedule、ScheduleChoice、CourseOffering、Enrollment、历史 Grade | Schedule、ScheduleChoice、Enrollment、CourseOffering 计数 | 学生草稿、预检、提交、删除 |
-| teaching | Semester、Professor、CourseOffering、OfferingMeeting、ProfessorQualification | CourseOffering、Professor 版本 | 教师授课方案 |
-| grading | Semester、Professor、CourseOffering、Enrollment、Grade | Grade | 名单、批量成绩 |
+| teaching | Semester、Professor、CourseOffering、OfferingMeeting、ProfessorQualification、Enrollment、Grade | CourseOffering、Professor 版本 | 教师授课方案、本人当前/历史名单、教务关闭后最终名单 |
+| grading | Semester、Professor、CourseOffering、Enrollment、Grade | Grade | 批量成绩、学生本人成绩单 |
 | closing | 以上冻结后的工作集 | Semester、CourseOffering、Enrollment、Schedule、RegistrationClose | 教务结课 |
 | billing | Schedule、Enrollment、CourseOffering、Student | BillingInvoice、BillingInvoiceItem、OutboxEvent | 账单事件、投递任务 |
 | audit | 当前操作者和业务结果 | AuditLog | 内部审计写入 |
@@ -287,7 +287,7 @@ findConflicts(List<MeetingSlot> slots) : List<Conflict>
 
 ## 7. teaching：授课分配与名单
 
-**职责**：教师选择教学班和查看最终名单；对应 FR-04、FR-05。
+**职责**：教师选择教学班、查看本人当前及历史正式注册名单，并提供教务关闭后最终名单只读查询；对应 FR-04、FR-05、FR-12。
 
 ### 7.1 TeachingAssignmentService
 
@@ -302,10 +302,15 @@ replacePlan(CurrentActor actor, Long semesterId, Set<Long> offeringIds, long exp
 ### 7.2 RosterService
 
 ```text
-getRoster(CurrentActor actor, Long offeringId) : RosterView
+get(CurrentActor actor, Long offeringId) : Roster
+finalRoster(CurrentActor registrar, Long semesterId, Long offeringId) : RegistrarRoster
 ```
 
-先查询班级实际 `professorId` 再做归属检查。名单只返回该班 `ENROLLED` 学生的最小资料、enrollmentId 和成绩版本，不返回完整历史成绩或敏感字段。按设计，最终名单面向学期结束且班级 CLOSED 的结果；若实现预览模式，需另设权限和明确状态，不能混入最终名单接口。
+`get` 先查询班级实际 `professorId`，校验当前教师资料和授课归属，再返回该班 `ENROLLED` 学生的最小资料、enrollmentId、当前成绩及成绩版本。不返回完整历史成绩或敏感字段。当前学期名单允许只读查询，不要求学期已结束或注册 CLOSED；`canEditGrades` 仅在学期已结束、学期及班级均 CLOSED 时为 true，成绩写服务仍独立校验相同条件。
+
+`finalRoster` 只允许 REGISTRAR。它确认指定学期为 CLOSED 且存在成功关闭记录，再检查教学班属于该学期及其冻结快照；未关闭返回 `409 + REGISTRATION_NOT_CLOSED`，跨学期或不属于该快照返回 404。名单只统计最终 `ENROLLED` 注册，包括 PRIMARY 主选与成功补位的 ALTERNATE，不包含草稿、退课、取消或未启用备选。响应为 `RegistrarRoster={semesterId,offering,students}`，学生项为 `{enrollmentId,studentId,studentName,source}`，不查询或返回 Grade。
+
+教师和教务名单响应均使用 `Cache-Control: no-store`。教务 Controller 的只读入口为 `GET /api/v1/registrar/semesters/{semesterId}/offerings/{offeringId}/roster`，与教师含成绩的名单入口分开；前端仅为关闭结果中的保留教学班提供最终名单弹窗。查询不改变注册、人数、成绩、账单或关闭状态。
 
 ## 8. grading：成绩与成绩单
 
@@ -410,10 +415,11 @@ IntegrationStatusQuery.listBilling(Long semesterId, BillingEventFilter filter, P
 | `PUT .../draft`、`POST .../validate`、`POST .../submit`、`DELETE ...` | `ScheduleService` |
 | `GET /students/me/report-cards/{id}` | `ReportCardService.getMine` |
 | `GET/PUT /professors/me/teaching/{id}` | `TeachingAssignmentService` |
-| `GET /professors/me/offerings/{id}/roster` | `RosterService.getRoster` |
+| `GET /professors/me/offerings/{id}/roster` | `RosterService.get`，本人当前/历史正式注册名单 |
 | `PUT /professors/me/offerings/{id}/grades` | `GradeService.updateBatch` |
 | `/registrar/students/**`、`/registrar/professors/**` | `StudentService`、`ProfessorService` |
 | `POST /registrar/semesters/{id}/close` | `RegistrationCloseService.close` |
+| `GET /registrar/semesters/{semesterId}/offerings/{offeringId}/roster` | `RosterService.finalRoster`，教务关闭后最终名单 |
 | `GET .../close-result`、`GET .../billing-events` | closing 查询、`IntegrationStatusQuery` |
 
 Controller 只做 Bean Validation、ID/ETag 解析和 DTO 转换；角色、对象归属、锁后重检均由 Service 完成。
@@ -441,7 +447,7 @@ Controller 只做 Bean Validation、ID/ETag 解析和 DTO 转换；角色、对�
 ### 阶段 D：教学与成绩
 
 1. 实现教师目标集合替换和教师版本递增。
-2. 实现最终名单查询，再实现成绩批量更新和首次 Grade 行的版本契约。
+2. 实现教师本人当前/历史正式注册名单与教务关闭后最终名单查询，再实现成绩批量更新和首次 Grade 行的版本契约；名单读取和成绩写入使用独立权限条件。
 3. 实现学生本人 ReportCard 查询及敏感字段检查。
 
 ### 阶段 E：结课、账单、同步

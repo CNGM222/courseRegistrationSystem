@@ -31,6 +31,9 @@ export function useSemesters(
       if (!choices.value.some((s) => s.id === selectedId.value))
         selectedId.value =
           (
+            // A caller supplied preference is authoritative (for example the
+            // classes page defaults to the most recent ended semester). Fall
+            // back to the open semester only when no preference is available.
             choices.value.find((s) => s.id === preferredId?.()) ||
             choices.value.find((s) => s.status === 'OPEN') ||
             choices.value[0]

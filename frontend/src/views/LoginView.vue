@@ -8,8 +8,29 @@ const auth = useAuthStore(),
   router = useRouter(),
   route = useRoute()
 const form = reactive({ username: '', password: '' }),
-  error = ref<unknown>(null)
+  error = ref<unknown>(null),
+  restoring = ref(false)
+function destination() {
+  return typeof route.query.redirect === 'string' &&
+    route.query.redirect.startsWith('/') &&
+    !route.query.redirect.startsWith('//') &&
+    !route.query.redirect.startsWith('/login')
+    ? route.query.redirect
+    : homeFor(auth.user!.role)
+}
+async function restoreSession() {
+  if (restoring.value || auth.loading) return
+  restoring.value = true
+  error.value = null
+  try {
+    await auth.restore(true)
+    if (auth.user) await router.replace(destination())
+  } finally {
+    restoring.value = false
+  }
+}
 async function submit() {
+  if (auth.loading || restoring.value) return
   if (!form.username.trim() || !form.password) {
     error.value = new Error('请输入账号和密码')
     return
@@ -17,14 +38,7 @@ async function submit() {
   error.value = null
   try {
     await auth.login(form.username.trim(), form.password)
-    const redirect =
-      typeof route.query.redirect === 'string' &&
-      route.query.redirect.startsWith('/') &&
-      !route.query.redirect.startsWith('//') &&
-      !route.query.redirect.startsWith('/login')
-        ? route.query.redirect
-        : homeFor(auth.user!.role)
-    await router.replace(redirect)
+    await router.replace(destination())
   } catch (e) {
     error.value = e
   } finally {
@@ -53,6 +67,8 @@ async function submit() {
         >
         <h2>登录教务门户</h2>
         <p class="subtitle">使用学校分配的账号进入个人工作台。</p>
+        <ErrorNotice :error="auth.restoreError" retry @retry="restoreSession" />
+        <p v-if="restoring" role="status" class="muted">正在重新检查登录状态…</p>
         <ErrorNotice :error="error" /><el-form
           :model="form"
           label-position="top"
@@ -66,7 +82,7 @@ async function submit() {
               maxlength="64"
               autocomplete="username"
               placeholder="请输入账号"
-              :disabled="auth.loading" /></el-form-item
+              :disabled="auth.loading || restoring" /></el-form-item
           ><el-form-item
             label="密码"
             required
@@ -74,14 +90,16 @@ async function submit() {
               v-model="form.password"
               size="large"
               type="password"
+              maxlength="128"
               autocomplete="current-password"
               placeholder="请输入密码"
-              :disabled="auth.loading" /></el-form-item
+              :disabled="auth.loading || restoring" /></el-form-item
           ><el-button
             native-type="submit"
             type="primary"
             size="large"
             :loading="auth.loading"
+            :disabled="restoring"
             style="width: 100%"
             >登录</el-button
           ></el-form

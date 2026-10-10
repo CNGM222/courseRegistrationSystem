@@ -38,7 +38,12 @@ public class GradeService {
     var o = db.lock(CourseOffering.class, offeringId);
     if (o.getProfessor() == null || !o.getProfessor().getId().equals(professor.getId()))
       throw BusinessException.forbidden();
-    if (!time.ended(o.getSemester()) || !"CLOSED".equals(o.getStatus()))
+    // Grades are available only after both the academic term and the
+    // registration process have been closed.  A date alone is insufficient:
+    // the registrar may not have frozen the final roster yet.
+    if (!time.ended(o.getSemester())
+        || !"CLOSED".equals(o.getSemester().getStatus())
+        || !"CLOSED".equals(o.getStatus()))
       throw BusinessException.conflict("GRADE_WINDOW_CLOSED", "学期或教学班尚未结束，暂不能录入成绩");
     var entries = new ArrayList<>(command.entries());
     entries.sort(Comparator.comparing(e -> WebValues.id(e.enrollmentId())));

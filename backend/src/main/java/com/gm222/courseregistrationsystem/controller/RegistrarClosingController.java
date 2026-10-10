@@ -5,7 +5,10 @@ import com.gm222.courseregistrationsystem.model.dto.ApiDtos.*;
 import com.gm222.courseregistrationsystem.service.billing.BillingQueryService;
 import com.gm222.courseregistrationsystem.service.closing.RegistrationCloseService;
 import com.gm222.courseregistrationsystem.service.identity.AuthService;
+import com.gm222.courseregistrationsystem.service.teaching.RosterService;
 import com.gm222.courseregistrationsystem.web.WebValues;
+import org.springframework.http.CacheControl;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
@@ -14,12 +17,14 @@ public class RegistrarClosingController {
   private final RegistrationCloseService close;
   private final BillingQueryService billing;
   private final AuthService auth;
+  private final RosterService rosters;
 
   public RegistrarClosingController(
-      RegistrationCloseService close, BillingQueryService billing, AuthService auth) {
+      RegistrationCloseService close, BillingQueryService billing, AuthService auth, RosterService rosters) {
     this.close = close;
     this.billing = billing;
     this.auth = auth;
+    this.rosters = rosters;
   }
 
   @PostMapping("/close")
@@ -30,6 +35,14 @@ public class RegistrarClosingController {
   @GetMapping("/close-result")
   public ApiResponse<CloseResult> result(@PathVariable String semesterId) {
     return ApiResponse.of(close.get(auth.current(), WebValues.id(semesterId)));
+  }
+
+  @GetMapping("/offerings/{offeringId}/roster")
+  public ResponseEntity<ApiResponse<RegistrarRoster>> roster(
+      @PathVariable String semesterId, @PathVariable String offeringId) {
+    var result =
+        rosters.finalRoster(auth.current(), WebValues.id(semesterId), WebValues.id(offeringId));
+    return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(ApiResponse.of(result));
   }
 
   @GetMapping("/billing-events")

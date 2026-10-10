@@ -146,6 +146,12 @@ public final class ApiDtos {
     }
   }
 
+  public record RegistrarRosterStudent(
+      String enrollmentId, String studentId, String studentName, String source) {}
+
+  public record RegistrarRoster(
+      String semesterId, Offering offering, List<RegistrarRosterStudent> students) {}
+
   public record ReportItem(
       String enrollmentId,
       String offeringId,

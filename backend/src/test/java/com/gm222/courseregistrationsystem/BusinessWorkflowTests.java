@@ -269,6 +269,89 @@ class BusinessWorkflowTests {
   }
 
   @Test
+  void currentProfessorRosterIsReadOnlyAndExcludesDraftsAndAlternates() {
+    var saved = submitted();
+    var draftOnly = tx.execute(status -> anotherStudent());
+    schedules.saveDraft(draftOnly, f.semester, draft(0), null);
+    var roster = rosters.get(f.professor, f.offerings.getFirst());
+    assertThat(roster.canEditGrades()).isFalse();
+    assertThat(roster.students()).hasSize(1);
+    assertThat(roster.students().getFirst().studentId()).isEqualTo(f.student.personId().toString());
+    assertThat(rosters.get(f.professor, f.offerings.get(4)).students()).isEmpty();
+    assertThatThrownBy(
+            () -> grades.update(f.professor, f.offerings.getFirst(),
+                new Grades(List.of(new GradeEntry(saved.enrollments().getFirst().id(), "A", null)))))
+        .isInstanceOf(BusinessException.class)
+        .extracting("code")
+        .isEqualTo("GRADE_WINDOW_CLOSED");
+    assertThatThrownBy(() -> rosters.get(f.student, f.offerings.getFirst()))
+        .isInstanceOf(BusinessException.class)
+        .extracting("status")
+        .isEqualTo(403);
+    var other = tx.execute(status -> {
+      var a = account("PROFESSOR");
+      var p = new Professor();
+      p.setAccount(a);
+      p.setName("其他教师");
+      p.setBirthDate(LocalDate.of(1980, 1, 1));
+      p.setDepartment("CS");
+      db.persist(p);
+      return new CurrentActor(a.getId(), "PROFESSOR", p.getId(), p.getName(), a.getUsername());
+    });
+    assertThatThrownBy(() -> rosters.get(other, f.offerings.getFirst()))
+        .isInstanceOf(BusinessException.class)
+        .extracting("status")
+        .isEqualTo(403);
+  }
+
+  @Test
+  void registrarFinalRosterRequiresClosureAndOnlyContainsEffectiveRegistrations() {
+    submitted();
+    assertThatThrownBy(() -> rosters.finalRoster(f.registrar, f.semester, f.offerings.getFirst()))
+        .isInstanceOf(BusinessException.class)
+        .extracting("code")
+        .isEqualTo("REGISTRATION_NOT_CLOSED");
+    var draftOnly = tx.execute(status -> anotherStudent());
+    schedules.saveDraft(draftOnly, f.semester, draft(0), null);
+    tx.executeWithoutResult(status -> {
+      seedRegistration(anotherStudent(), List.of(f.offerings.getFirst()), true);
+      var alternateStudent = anotherStudent();
+      seedRegistration(alternateStudent, List.of(f.offerings.getFirst()), true);
+      var alternate = db.enrollments(db.schedule(alternateStudent.personId(), f.semester).orElseThrow()).getFirst();
+      alternate.setSource("ALTERNATE");
+      var withdrawnStudent = anotherStudent();
+      seedRegistration(withdrawnStudent, List.of(f.offerings.getFirst()), true);
+      db.enrollments(db.schedule(withdrawnStudent.personId(), f.semester).orElseThrow()).getFirst().setState("DROPPED");
+      var offering = db.get(CourseOffering.class, f.offerings.getFirst());
+      offering.setEnrolledCount((short) (offering.getEnrolledCount() - 1));
+    });
+    expired();
+    close.close(f.registrar, f.semester);
+    var roster = rosters.finalRoster(f.registrar, f.semester, f.offerings.getFirst());
+    assertThat(roster.semesterId()).isEqualTo(f.semester.toString());
+    assertThat(roster.offering().status()).isEqualTo("CLOSED");
+    assertThat(roster.students()).hasSize(3);
+    assertThat(roster.students()).extracting(RegistrarRosterStudent::source).contains("PRIMARY", "ALTERNATE");
+    assertThat(roster.students()).extracting(RegistrarRosterStudent::studentId)
+        .doesNotContain(draftOnly.personId().toString());
+    assertThat(rosters.finalRoster(f.registrar, f.semester, f.offerings.get(1)).students()).isEmpty();
+    assertThatThrownBy(() -> rosters.finalRoster(f.student, f.semester, f.offerings.getFirst()))
+        .isInstanceOf(BusinessException.class)
+        .extracting("status")
+        .isEqualTo(403);
+    assertThatThrownBy(() -> rosters.finalRoster(f.professor, f.semester, f.offerings.getFirst()))
+        .isInstanceOf(BusinessException.class)
+        .extracting("status")
+        .isEqualTo(403);
+    var otherSemester = tx.execute(status -> fixture().semester());
+    assertThatThrownBy(() -> rosters.finalRoster(f.registrar, f.semester,
+            tx.execute(status -> db.offerings(otherSemester).getFirst().getId())))
+        .isInstanceOf(BusinessException.class)
+        .extracting("status")
+        .isEqualTo(404);
+  }
+
+  @Test
   void rosterGradeExistenceAndBatchRollback() {
     var v = submitted();
     tx.executeWithoutResult(

@@ -94,10 +94,15 @@ public class PersonService {
     registrar(actor);
     validate(c, kind);
     if (c.username() == null || c.username().isBlank()) throw BusinessException.invalid("登录账号不能为空");
+    String username = c.username().strip().toLowerCase(Locale.ROOT);
+    if (db.count(
+            "select count(a) from Account a where lower(a.username)=:u",
+            Map.of("u", username))
+        > 0) throw BusinessException.conflict("DUPLICATE_USERNAME", "登录账号已存在");
     uniqueSsn(kind, null, c.socialSecurityNumber());
     var account = new Account();
     account.setEnabled("ACTIVE".equals(c.status()));
-    account.setUsername(c.username().strip().toLowerCase(Locale.ROOT));
+    account.setUsername(username);
     account.setPasswordHash(passwords.encode(UUID.randomUUID().toString()));
     account.setRole("students".equals(kind) ? "STUDENT" : "PROFESSOR");
     db.persist(account);
@@ -131,6 +136,9 @@ public class PersonService {
       var s = db.lock(Student.class, id);
       if (s.getDeletedAt() != null) throw BusinessException.missing("学生不存在");
       WebValues.match(expected, s.getVersion());
+      // Keep account status changes in the same lock order as the person
+      // aggregate. This serializes a concurrent login/disable operation.
+      db.lock(Account.class, s.getAccount().getId());
       if (!"ACTIVE".equals(c.status())) requireNoRegistration(id);
       apply(s, c);
       s.getAccount().setEnabled("ACTIVE".equals(c.status()));
@@ -142,6 +150,7 @@ public class PersonService {
     var p = db.lock(Professor.class, id);
     if (p.getDeletedAt() != null) throw BusinessException.missing("教师不存在");
     WebValues.match(expected, p.getVersion());
+    db.lock(Account.class, p.getAccount().getId());
     if (!"ACTIVE".equals(c.status())) requireNoTeaching(id);
     apply(p, c);
     p.getAccount().setEnabled("ACTIVE".equals(c.status()));
@@ -159,6 +168,7 @@ public class PersonService {
       var s = db.lock(Student.class, id);
       if (s.getDeletedAt() != null) throw BusinessException.missing("学生不存在");
       WebValues.match(expected, s.getVersion());
+      db.lock(Account.class, s.getAccount().getId());
       requireNoRegistration(id);
       s.setStatus("INACTIVE");
       s.setDeletedAt(time.now());
@@ -169,6 +179,7 @@ public class PersonService {
       var p = db.lock(Professor.class, id);
       if (p.getDeletedAt() != null) throw BusinessException.missing("教师不存在");
       WebValues.match(expected, p.getVersion());
+      db.lock(Account.class, p.getAccount().getId());
       requireNoTeaching(id);
       p.setStatus("INACTIVE");
       p.setDeletedAt(time.now());

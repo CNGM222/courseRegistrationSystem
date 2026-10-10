@@ -7,7 +7,7 @@ import { useSemesters } from '../../composables/useSemesters'
 import { useDirtyGuard } from '../../composables/useDirtyGuard'
 import { useAuthStore } from '../../stores/auth'
 import { useRecoveryStore } from '../../stores/recovery'
-import { choiceIds, dateTime } from '../../utils/format'
+import { choiceIds, dateTime, registrationOpen } from '../../utils/format'
 import type { Schedule, Offering, ValidationIssue } from '../../types/api'
 import SemesterSelect from '../../components/SemesterSelect.vue'
 import ErrorNotice from '../../components/ErrorNotice.vue'
@@ -23,6 +23,7 @@ const {
   selectedId,
   current,
   open,
+  loading: semesterLoading,
   error: semesterError,
   load: reloadSemesters,
 } = useSemesters('current', () =>
@@ -39,6 +40,7 @@ const error = ref<unknown>(null),
   blocked = ref(false),
   saved = ref(''),
   notice = ref(''),
+  validationPassed = ref(false),
   issues = ref<ValidationIssue[]>([])
 const mobile = ref(window.innerWidth <= 760)
 function resize() {
@@ -54,6 +56,15 @@ function showOffering(id: string) {
   selectedDetail.value = cache.value[id] || null
   detailVisible.value = true
 }
+function selectionStatus(id: string) {
+  return schedule.value?.enrollments.some((e) => e.offeringId === id && e.state === 'ENROLLED')
+    ? '已正式注册'
+    : '已选择'
+}
+function issueText(issue: ValidationIssue) {
+  const name = issue.offeringId && cache.value[issue.offeringId]?.courseName
+  return name && !issue.message.includes(name) ? `${name}：${issue.message}` : issue.message
+}
 const fingerprint = computed(() => JSON.stringify([primary.value, alternate.value]))
 const dirty = computed(() => ready.value && fingerprint.value !== saved.value)
 const { confirmLeave } = useDirtyGuard(dirty)
@@ -63,6 +74,17 @@ const disabled = computed(
 let generation = 0,
   polling = false,
   timer: ReturnType<typeof setInterval>
+function isCurrent(sid: string, token: number) {
+  return token === generation && sid === selectedId.value && auth.user?.accountId === owner
+}
+function canContinue(sid: string, token: number) {
+  if (!isCurrent(sid, token) || blocked.value || !ready.value || loading.value) return false
+  if (!registrationOpen(current.value)) {
+    ElMessage.warning('选课开放时段已结束，请读取最新课表核对状态')
+    return false
+  }
+  return true
+}
 function remember(list: Offering[]) {
   for (const o of list) cache.value[o.id] = o
 }
@@ -93,7 +115,10 @@ function apply(s: Schedule | null) {
 async function loadSchedule(preserve = false) {
   const sid = selectedId.value,
     token = ++generation
-  if (!sid) return
+  if (!sid) {
+    loading.value = false
+    return
+  }
   const keepLocal = preserve && ready.value && (dirty.value || blocked.value)
   loading.value = true
   error.value = null
@@ -108,20 +133,16 @@ async function loadSchedule(preserve = false) {
       if (e instanceof HttpError && e.status === 404 && e.code === 'SCHEDULE_NOT_FOUND') next = null
       else throw e
     }
-    if (token !== generation) return
+    if (!isCurrent(sid, token)) return
     apply(next)
-    const ids = [...new Set([...primary.value, ...alternate.value])].filter(
-      (id) => !cache.value[id],
-    )
-    const details = await Promise.all(ids.map((id) => api.offering(id)))
-    if (token !== generation) return
-    remember(details.map((d) => d.data))
-    blocked.value = false
     if (keepLocal) {
       primary.value = local.primary
       alternate.value = local.alternate
       notice.value = '已读取服务器最新课表，保留了本地方案。请核对“有效课表”和本地修改后重新保存。'
-    } else if (remembered?.owner === owner && remembered.semesterId === sid && open.value) {
+    }
+    validationPassed.value = false
+    issues.value = []
+    if (!keepLocal && remembered?.owner === owner && remembered.semesterId === sid && open.value) {
       const old = remembered
       try {
         await ElMessageBox.confirm(
@@ -129,33 +150,42 @@ async function loadSchedule(preserve = false) {
           '恢复工作方案',
           { confirmButtonText: '恢复方案', cancelButtonText: '使用服务器版本' },
         )
-        if (token === generation) {
-          remember(old.offerings)
-          primary.value = [...old.primary]
-          alternate.value = [...old.alternate]
-        }
+        if (!isCurrent(sid, token)) return
+        remember(old.offerings)
+        primary.value = [...old.primary]
+        alternate.value = [...old.alternate]
       } catch {
+        if (!isCurrent(sid, token)) return
         recovery.clear()
       }
     }
+    const ids = [...new Set([...primary.value, ...alternate.value])].filter(
+      (id) => !cache.value[id],
+    )
+    const details = await Promise.all(ids.map((id) => api.offering(id)))
+    if (!isCurrent(sid, token)) return
+    remember(details.map((d) => d.data))
+    blocked.value = false
   } catch (e) {
-    if (token === generation) error.value = e
+    if (isCurrent(sid, token)) error.value = e
   } finally {
     if (token === generation) loading.value = false
   }
 }
 async function selectSemester(id: string) {
-  if (busy.value || !(await confirmLeave())) return
+  if (busy.value || loading.value || !(await confirmLeave()) || !auth.user) return
   recovery.clear()
   selectedId.value = id
 }
 watch(selectedId, () => {
   ready.value = false
+  schedule.value = null
   primary.value = []
   alternate.value = []
   cache.value = {}
   notice.value = ''
   issues.value = []
+  validationPassed.value = false
   void loadSchedule()
 })
 function add(o: Offering, kind: 'PRIMARY' | 'ALTERNATE') {
@@ -169,20 +199,31 @@ function add(o: Offering, kind: 'PRIMARY' | 'ALTERNATE') {
   remember([o])
   target.value.push(o.id)
   issues.value = []
+  validationPassed.value = false
 }
 function remove(kind: 'PRIMARY' | 'ALTERNATE', i: number) {
+  if (disabled.value) return
   ;(kind === 'PRIMARY' ? primary : alternate).value.splice(i, 1)
   issues.value = []
+  validationPassed.value = false
 }
-async function save() {
+function reorderAlternates() {
+  if (disabled.value) return
+  alternate.value.reverse()
+  issues.value = []
+  validationPassed.value = false
+}
+async function save(sid: string, token: number) {
   const { data } = await api.student.saveDraft(
-    selectedId.value,
+    sid,
     { primaryOfferingIds: primary.value, alternateOfferingIds: alternate.value },
     schedule.value?.version,
   )
+  if (!isCurrent(sid, token)) return null
   apply(data)
   recovery.clear()
   issues.value = []
+  validationPassed.value = false
   return data
 }
 async function handleFailure(e: unknown) {
@@ -195,19 +236,25 @@ async function handleFailure(e: unknown) {
 }
 async function saveDraft() {
   if (disabled.value) return
+  const sid = selectedId.value,
+    token = generation
+  if (!canContinue(sid, token)) return
   busy.value = true
   error.value = null
   try {
-    await save()
+    if (!(await save(sid, token))) return
     ElMessage.success('草稿已保存，名额未发生变化')
   } catch (e) {
-    await handleFailure(e)
+    if (isCurrent(sid, token)) await handleFailure(e)
   } finally {
     busy.value = false
   }
 }
-async function submit() {
+async function precheck(andSubmit = false) {
   if (disabled.value) return
+  const sid = selectedId.value,
+    token = generation
+  if (!canContinue(sid, token)) return
   if (
     !schedule.value?.firstSubmittedAt &&
     (primary.value.length !== 4 || alternate.value.length !== 2)
@@ -216,79 +263,115 @@ async function submit() {
   busy.value = true
   error.value = null
   issues.value = []
+  validationPassed.value = false
   try {
-    const s = dirty.value || !schedule.value?.draftRevision ? await save() : schedule.value
-    const validation = (await api.student.validate(selectedId.value, s!.draftRevision!)).data
+    const s =
+      dirty.value || schedule.value?.draftRevision == null ? await save(sid, token) : schedule.value
+    if (!s || !canContinue(sid, token)) return
+    if (s?.draftRevision == null) throw new Error('服务器未返回草稿版本，请读取最新课表后重试')
+    const revision = s.draftRevision,
+      version = s.version,
+      planFingerprint = fingerprint.value
+    const validation = (await api.student.validate(sid, revision)).data
+    if (!canContinue(sid, token)) return
     issues.value = validation.issues
     remember(validation.affectedOfferings || [])
     if (!validation.valid) {
       if (!validation.issues.length) error.value = new Error('方案未通过校验，请调整课程后重新预检')
       return
     }
-    const old = s!.enrollments.filter((e) => e.state === 'ENROLLED').map((e) => e.offeringId)
+    validationPassed.value = true
+    if (!andSubmit) return
+    const old = s.enrollments.filter((e) => e.state === 'ENROLLED').map((e) => e.offeringId)
     const names = (ids: string[]) =>
       ids.map((id) => cache.value[id]?.courseName || id).join('、') || '无'
     try {
       await ElMessageBox.confirm(
-        `新增：${names(primary.value.filter((id) => !old.includes(id)))}；退课：${names(old.filter((id) => !primary.value.includes(id)))}；保留：${names(primary.value.filter((id) => old.includes(id)))}。两门备选不提前占位，最终结果以提交校验为准。`,
+        `新增：${names(primary.value.filter((id) => !old.includes(id)))}；退课：${names(old.filter((id) => !primary.value.includes(id)))}；保留：${names(primary.value.filter((id) => old.includes(id)))}。备选 ${alternate.value.length} 门不提前占位，最终结果以提交校验为准。`,
         '确认提交选课方案',
         { confirmButtonText: '正式提交', cancelButtonText: '继续编辑', type: 'warning' },
       )
     } catch {
       return
     }
-    apply((await api.student.submit(selectedId.value, s!.draftRevision!, s!.version)).data)
+    if (!canContinue(sid, token)) return
+    if (
+      schedule.value?.draftRevision !== revision ||
+      schedule.value?.version !== version ||
+      fingerprint.value !== planFingerprint
+    ) {
+      ElMessage.warning('课表或工作方案已变化，请重新预检并确认提交')
+      return
+    }
+    const submitted = (await api.student.submit(sid, revision, version)).data
+    if (!isCurrent(sid, token)) return
+    apply(submitted)
     recovery.clear()
     notice.value = ''
+    validationPassed.value = false
     ElMessage.success('选课提交成功，有效课表已更新')
   } catch (e) {
-    await handleFailure(e)
+    if (isCurrent(sid, token)) await handleFailure(e)
   } finally {
     busy.value = false
   }
 }
 async function deleteSchedule() {
   if (disabled.value || !schedule.value?.id) return
-  try {
-    await ElMessageBox.confirm(
-      '这将撤销所有有效注册、释放名额并删除当前主选和备选方案。',
-      '删除整个课表？',
-      { confirmButtonText: '确认删除', cancelButtonText: '取消', type: 'warning' },
-    )
-  } catch {
-    return
-  }
+  const sid = selectedId.value,
+    token = generation,
+    version = schedule.value.version,
+    scheduleId = schedule.value.id
+  if (!canContinue(sid, token)) return
   busy.value = true
   error.value = null
   try {
-    await api.student.deleteSchedule(selectedId.value, schedule.value.version)
+    try {
+      await ElMessageBox.confirm(
+        '这将撤销所有有效注册、释放名额并删除当前主选和备选方案。',
+        '删除整个课表？',
+        { confirmButtonText: '确认删除', cancelButtonText: '取消', type: 'warning' },
+      )
+    } catch {
+      return
+    }
+    if (!canContinue(sid, token)) return
+    if (schedule.value?.id !== scheduleId || schedule.value?.version !== version) {
+      ElMessage.warning('课表已变化，请读取最新课表后重新确认删除')
+      return
+    }
+    await api.student.deleteSchedule(sid, version)
+    if (!isCurrent(sid, token)) return
     apply(null)
     recovery.clear()
     await loadSchedule()
     ElMessage.success('课表已删除，原名额已释放')
   } catch (e) {
-    await handleFailure(e)
+    if (isCurrent(sid, token)) await handleFailure(e)
   } finally {
     busy.value = false
   }
 }
 async function poll() {
   const ids = [...primary.value, ...alternate.value],
-    sid = selectedId.value
+    sid = selectedId.value,
+    token = generation
   if (document.hidden || polling || !auth.user || !sid || !ids.length) return
   polling = true
   try {
     const latest = (await api.semesters.availability(sid, ids)).data
-    if (sid !== selectedId.value || !auth.user) return
+    if (!isCurrent(sid, token)) return
     const full = latest.filter(
       (o) =>
         o.enrolledCount >= o.maxStudents && (cache.value[o.id]?.enrolledCount || 0) < o.maxStudents,
     )
     remember(latest)
-    if (full.length)
+    if (full.length) {
+      validationPassed.value = false
       notice.value = `${full.map((o) => o.courseName).join('、')} 名额已满。请核对方案；最终提交会再次校验。`
+    }
   } catch (e) {
-    if (sid === selectedId.value && auth.user)
+    if (isCurrent(sid, token))
       notice.value = '暂时无法更新名额，显示值可能过期。提交前会进行服务端预检。'
   } finally {
     polling = false
@@ -313,12 +396,14 @@ onUnmounted(() => {
   <div class="page-heading">
     <div>
       <h1 class="page-title">选课中心</h1>
-      <p class="page-description">安排下一段学习旅程。主选四门，备选两门。</p>
+      <p class="page-description">
+        首次提交需四门主选和两门备选；提交后的加退课可保留零至四门主选、零至两门备选。
+      </p>
     </div>
     <SemesterSelect
       :model-value="selectedId"
       :semesters="choices"
-      :disabled="busy"
+      :disabled="busy || loading"
       @update:model-value="selectSemester"
     />
   </div>
@@ -362,12 +447,18 @@ onUnmounted(() => {
       type="warning"
       >尚未保存</el-tag
     ><el-tag
-      v-else
+      v-else-if="ready && !blocked && !loading"
       type="info"
       >工作方案已同步</el-tag
     >
   </div>
-  <el-tabs v-model="tab"
+  <el-empty
+    v-if="!semesterLoading && !semesterError && !choices.length"
+    description="暂无可选课的学期"
+  />
+  <el-tabs
+    v-if="selectedId"
+    v-model="tab"
     ><el-tab-pane
       label="选课方案"
       name="plan"
@@ -402,6 +493,12 @@ onUnmounted(() => {
                   {{ cache[primary[i - 1]]?.enrolledCount }} /
                   {{ cache[primary[i - 1]]?.maxStudents }} 人
                 </div>
+                <el-tag
+                  size="small"
+                  :type="selectionStatus(primary[i - 1]) === '已正式注册' ? 'success' : 'info'"
+                >
+                  {{ selectionStatus(primary[i - 1]) }}
+                </el-tag>
                 <el-button
                   link
                   size="small"
@@ -428,9 +525,23 @@ onUnmounted(() => {
             >
               <div class="slot-label">第 {{ i }} 备选</div>
               <template v-if="alternate[i - 1]"
-                ><div class="slot-course">
+                ><el-button
+                  link
+                  type="primary"
+                  @click="showOffering(alternate[i - 1])"
+                >
                   {{ cache[alternate[i - 1]]?.courseName || alternate[i - 1] }}
+                </el-button>
+                <div class="slot-meta">
+                  {{ cache[alternate[i - 1]]?.enrolledCount }} /
+                  {{ cache[alternate[i - 1]]?.maxStudents }} 人 · 不提前占位
                 </div>
+                <el-tag
+                  size="small"
+                  :type="selectionStatus(alternate[i - 1]) === '已正式注册' ? 'success' : 'info'"
+                >
+                  {{ selectionStatus(alternate[i - 1]) }}
+                </el-tag>
                 <el-button
                   link
                   size="small"
@@ -442,7 +553,7 @@ onUnmounted(() => {
                   link
                   size="small"
                   :disabled="disabled"
-                  @click="alternate.reverse()"
+                  @click="reorderAlternates"
                   >上移优先级</el-button
                 ></template
               ><span
@@ -455,8 +566,15 @@ onUnmounted(() => {
           <el-alert
             v-for="(issue, i) in issues"
             :key="i"
-            :title="issue.message"
+            :title="issueText(issue)"
             type="error"
+            :closable="false"
+            show-icon
+          />
+          <el-alert
+            v-if="validationPassed"
+            title="方案预检通过，尚未正式提交；预检不占名额，正式提交时将再次校验。"
+            type="success"
             :closable="false"
             show-icon
           />
@@ -470,10 +588,15 @@ onUnmounted(() => {
               @click="saveDraft"
               >保存草稿</el-button
             ><el-button
+              :disabled="disabled"
+              :loading="busy"
+              @click="precheck()"
+              >预检方案</el-button
+            ><el-button
               type="primary"
               :disabled="disabled"
               :loading="busy"
-              @click="submit"
+              @click="precheck(true)"
               >预检并提交</el-button
             ><el-button
               type="danger"
@@ -505,7 +628,14 @@ onUnmounted(() => {
     ><el-tab-pane
       label="当前有效课表"
       name="effective"
-      ><ScheduleDisplay :schedule="schedule" /></el-tab-pane></el-tabs
+      ><el-skeleton
+        v-if="loading && !schedule"
+        class="surface"
+        :rows="5"
+        animated />
+      <ScheduleDisplay
+        v-else-if="ready || schedule"
+        :schedule="schedule" /></el-tab-pane></el-tabs
   ><OfferingDetail
     v-model="detailVisible"
     :offering="selectedDetail"

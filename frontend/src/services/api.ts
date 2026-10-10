@@ -8,6 +8,7 @@ import type {
   PageResult,
   PersonRecord,
   ReportCard,
+  RegistrarRoster,
   Roster,
   Schedule,
   ScheduleValidation,
@@ -99,6 +100,10 @@ export const api = {
       }),
   },
   registrar: {
+    finalRoster: (semesterId: string, offeringId: string) =>
+      request<RegistrarRoster>(
+        `/registrar/semesters/${encodeURIComponent(semesterId)}/offerings/${encodeURIComponent(offeringId)}/roster`,
+      ),
     person: (kind: 'students' | 'professors', id: string) =>
       request<PersonRecord>(`/registrar/${kind}/${encodeURIComponent(id)}`),
     students: (page = 1, pageSize = 20, keyword = '') =>

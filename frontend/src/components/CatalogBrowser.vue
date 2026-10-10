@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, watch, onUnmounted } from 'vue'
 import { api } from '../services/api'
-import { dateTime, meetsText } from '../utils/format'
+import { dateTime, meetsText, label } from '../utils/format'
 import type { Offering } from '../types/api'
 import ErrorNotice from './ErrorNotice.vue'
 import OfferingDetail from './OfferingDetail.vue'
@@ -20,15 +20,38 @@ const keyword = ref(''),
   total = ref(0),
   snapshot = ref('')
 const detail = ref<Offering | null>(null),
-  showDetail = ref(false)
-function showOffering(offering: Offering) {
-  detail.value = offering
+  showDetail = ref(false),
+  detailLoading = ref(false),
+  detailError = ref<unknown>(null)
+let detailGeneration = 0
+let detailId = ''
+async function showOffering(offering: Offering) {
+  const token = ++detailGeneration
+  detailId = offering.id
+  detail.value = null
+  detailError.value = null
+  detailLoading.value = true
   showDetail.value = true
+  try {
+    const { data } = await api.offering(offering.id)
+    if (token === detailGeneration) detail.value = data
+  } catch (e) {
+    if (token === detailGeneration) detailError.value = e
+  } finally {
+    if (token === detailGeneration) detailLoading.value = false
+  }
+}
+function retryDetail() {
+  const offering = items.value.find((item) => item.id === detailId)
+  if (offering) void showOffering(offering)
 }
 let generation = 0
 async function load() {
-  if (!props.semesterId) return
   const token = ++generation
+  if (!props.semesterId) {
+    loading.value = false
+    return
+  }
   loading.value = true
   error.value = null
   try {
@@ -48,6 +71,8 @@ async function load() {
     if (token === generation) {
       error.value = e
       items.value = []
+      total.value = 0
+      snapshot.value = ''
     }
   } finally {
     if (token === generation) loading.value = false
@@ -61,6 +86,13 @@ watch(
   () => props.semesterId,
   () => {
     items.value = []
+    total.value = 0
+    snapshot.value = ''
+    departments.value = []
+    error.value = null
+    detailGeneration++
+    showDetail.value = false
+    detail.value = null
     department.value = ''
     page.value = 1
     void load()
@@ -69,6 +101,7 @@ watch(
 )
 onUnmounted(() => {
   generation++
+  detailGeneration++
 })
 </script>
 <template>
@@ -122,9 +155,10 @@ onUnmounted(() => {
         retry
         @retry="load"
       /><el-table
+        v-if="!error"
         v-loading="loading"
         :data="items"
-        empty-text="暂无符合条件的课程"
+        :empty-text="loading ? '正在查询课程…' : semesterId ? '暂无符合条件的课程' : '请先选择学期'"
         style="margin-top: 16px"
         ><el-table-column
           label="课程"
@@ -174,6 +208,13 @@ onUnmounted(() => {
               >{{ row.enrolledCount }} / {{ row.maxStudents }}</el-tag
             ></template
           ></el-table-column
+        ><el-table-column label="状态" min-width="100"
+          ><template #default="{ row }"
+            ><el-tag :type="row.status === 'CANCELLED' ? 'danger' : 'info'" size="small"
+              >{{ label(row.status) }}</el-tag
+            ><div v-if="row.cancelReason" class="tiny muted">{{ label(row.cancelReason) }}</div
+          ></template
+        ></el-table-column
         ><el-table-column
           v-if="selectable"
           label="加入方案"
@@ -207,6 +248,7 @@ onUnmounted(() => {
           ></el-table-column
         ></el-table
       ><el-pagination
+        v-if="!error && total > 0"
         v-model:current-page="page"
         :page-size="10"
         :total="total"
@@ -219,6 +261,9 @@ onUnmounted(() => {
     <OfferingDetail
       v-model="showDetail"
       :offering="detail"
+      :loading="detailLoading"
+      :error="detailError"
+      @retry="retryDetail"
     />
   </section>
 </template>

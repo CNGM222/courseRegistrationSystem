@@ -7,14 +7,16 @@ import { useSemesters } from '../../composables/useSemesters'
 import { useDirtyGuard } from '../../composables/useDirtyGuard'
 import { useAuthStore } from '../../stores/auth'
 import type { TeachingPlan, Offering } from '../../types/api'
-import { meetsText } from '../../utils/format'
+import { dateTime, label, meetsText, registrationOpen } from '../../utils/format'
 import SemesterSelect from '../../components/SemesterSelect.vue'
 import ErrorNotice from '../../components/ErrorNotice.vue'
 import OfferingDetail from '../../components/OfferingDetail.vue'
 const {
   choices,
   selectedId,
+  current,
   open,
+  loading: semesterLoading,
   error: semesterError,
   load: reloadSemesters,
 } = useSemesters('current')
@@ -26,7 +28,8 @@ const auth = useAuthStore(),
   blocked = ref(false),
   error = ref<unknown>(null)
 const detail = ref<Offering | null>(null),
-  detailVisible = ref(false)
+  detailVisible = ref(false),
+  lastSubmittedIds = ref<string[]>([])
 function showOffering(offering: Offering) {
   detail.value = offering
   detailVisible.value = true
@@ -45,13 +48,34 @@ const all = computed(() => [
   ).values(),
 ])
 const disabled = computed(
-  () => !open.value || loading.value || busy.value || blocked.value || !plan.value,
+  () =>
+    !open.value ||
+    loading.value ||
+    semesterLoading.value ||
+    busy.value ||
+    blocked.value ||
+    !plan.value,
 )
+const offeringErrors = computed(() => {
+  const details = error.value instanceof HttpError ? error.value.details : null
+  const messages: Record<string, string[]> = {}
+  if (!Array.isArray(details)) return messages
+  for (const item of details) {
+    if (!item || typeof item !== 'object') continue
+    const index = typeof item.field === 'string' ? item.field.match(/^offeringIds\[(\d+)\]/) : null
+    const id = item.offeringId || (index ? lastSubmittedIds.value[Number(index[1])] : undefined)
+    if (typeof id === 'string') (messages[id] ||= []).push(item.message || '此教学班校验失败')
+  }
+  return messages
+})
 let generation = 0
 async function load() {
-  if (!selectedId.value) return
   const token = ++generation
   error.value = null
+  if (!selectedId.value) {
+    loading.value = false
+    return
+  }
   loading.value = true
   try {
     const { data } = await api.professor.teaching(selectedId.value)
@@ -75,30 +99,49 @@ async function selectSemester(id: string) {
   if (await confirmLeave()) selectedId.value = id
 }
 async function refresh() {
+  if (busy.value || loading.value) return
   if (await confirmLeave()) await load()
 }
 async function save() {
-  if (disabled.value || !plan.value) return
-  try {
-    await ElMessageBox.confirm(
-      '提交后将统一更新本人的授课选择，已取消的教学班不再由您任教。',
-      '确认授课方案',
-      { confirmButtonText: '保存方案', cancelButtonText: '取消' },
-    )
-  } catch {
-    return
-  }
+  if (disabled.value || !plan.value || !dirty.value) return
+  const token = generation
+  const semesterId = selectedId.value
   busy.value = true
-  error.value = null
   try {
-    plan.value = (
-      await api.professor.saveTeaching(selectedId.value, selected.value, plan.value.version)
-    ).data
-    selected.value = [...plan.value.selectedOfferingIds]
-    ElMessage.success('授课方案已保存')
-  } catch (e) {
-    error.value = e
-    if (e instanceof HttpError && [0, 409, 412].includes(e.status)) blocked.value = true
+    try {
+      await ElMessageBox.confirm(
+        '提交后将统一更新本人的授课选择，已取消的教学班不再由您任教。',
+        '确认授课方案',
+        { confirmButtonText: '保存方案', cancelButtonText: '取消' },
+      )
+    } catch {
+      return
+    }
+    if (
+      token !== generation ||
+      !registrationOpen(current.value) ||
+      loading.value ||
+      blocked.value ||
+      !plan.value
+    )
+      return
+    lastSubmittedIds.value = [...selected.value]
+    error.value = null
+    try {
+      const { data } = await api.professor.saveTeaching(
+        semesterId,
+        lastSubmittedIds.value,
+        plan.value.version,
+      )
+      if (token !== generation) return
+      plan.value = data
+      selected.value = [...data.selectedOfferingIds]
+      ElMessage.success('授课方案已保存')
+    } catch (e) {
+      if (token !== generation) return
+      error.value = e
+      if (e instanceof HttpError && [0, 409, 412, 428].includes(e.status)) blocked.value = true
+    }
   } finally {
     busy.value = false
   }
@@ -118,6 +161,15 @@ onUnmounted(() => generation++)
       @update:model-value="selectSemester"
     />
   </div>
+  <p
+    v-if="current"
+    class="tiny muted"
+  >
+    {{ current.name }} · {{ label(current.status) }} · 授课选择开放：{{
+      dateTime(current.registrationStart)
+    }}
+    至 {{ dateTime(current.addDropEnd) }}
+  </p>
   <ErrorNotice
     :error="semesterError"
     retry
@@ -133,16 +185,88 @@ onUnmounted(() => generation++)
     type="warning"
     :closable="false"
   />
+  <section
+    v-if="plan"
+    class="surface"
+  >
+    <div class="surface-header">
+      <strong>已保存的授课 · {{ plan.selectedOfferings.length }} 个教学班</strong>
+    </div>
+    <div class="surface-body">
+      <el-table
+        :data="plan.selectedOfferings"
+        empty-text="尚未保存任何授课教学班"
+      >
+        <el-table-column
+          label="教学班"
+          min-width="180"
+        >
+          <template #default="{ row }">
+            <el-button
+              link
+              type="primary"
+              @click="showOffering(row)"
+              >{{ row.courseName }}</el-button
+            >
+            <div class="course-code">{{ row.courseCode }} · {{ row.sectionCode }} 班</div>
+          </template>
+        </el-table-column>
+        <el-table-column
+          label="上课时间"
+          min-width="250"
+        >
+          <template #default="{ row }"
+            ><p
+              v-for="m in meetsText(row.meetings)"
+              :key="m"
+              class="tiny"
+            >
+              {{ m }}
+            </p></template
+          >
+        </el-table-column>
+        <el-table-column
+          label="状态"
+          min-width="120"
+        >
+          <template #default="{ row }"
+            >{{ label(row.status) }}
+            <p
+              v-if="row.cancelReason"
+              class="tiny muted"
+            >
+              {{ label(row.cancelReason) }}
+            </p></template
+          >
+        </el-table-column>
+        <el-table-column
+          label="名单与成绩"
+          min-width="125"
+        >
+          <template #default="{ row }">
+            <router-link
+              class="table-link"
+              :to="{
+                path: `/professor/offerings/${encodeURIComponent(row.id)}/roster`,
+                query: { semesterId: selectedId },
+              }"
+              >查看名单</router-link
+            >
+          </template>
+        </el-table-column>
+      </el-table>
+    </div>
+  </section>
   <section class="surface">
     <div class="surface-header">
-      <strong>可授课教学班</strong>
+      <strong>待提交授课方案</strong>
       <div class="action-row">
         <el-tag
           v-if="dirty"
           type="warning"
           >尚未保存</el-tag
         ><el-button
-          :disabled="!selectedId || busy"
+          :disabled="!selectedId || busy || loading"
           :loading="loading"
           @click="refresh"
           >重新读取</el-button
@@ -156,7 +280,14 @@ onUnmounted(() => generation++)
       </div>
     </div>
     <div class="surface-body">
-      <el-checkbox-group v-model="selected"
+      <el-skeleton
+        v-if="(loading || semesterLoading) && !plan"
+        :rows="4"
+        animated
+      />
+      <el-checkbox-group
+        v-if="plan"
+        v-model="selected"
         ><el-table
           v-loading="loading"
           :data="all"
@@ -166,7 +297,7 @@ onUnmounted(() => generation++)
             width="65"
             ><template #default="{ row }"
               ><el-checkbox
-                :value="row.id"
+                :label="row.id"
                 :aria-label="`选择${row.courseName}${row.sectionCode}班`"
                 :disabled="
                   disabled ||
@@ -184,9 +315,14 @@ onUnmounted(() => generation++)
                 @click="showOffering(row)"
                 >{{ row.courseName }}</el-button
               >
-              <div class="course-code">
-                {{ row.courseCode }} · {{ row.sectionCode }} 班
-              </div></template
+              <div class="course-code">{{ row.courseCode }} · {{ row.sectionCode }} 班</div>
+              <p
+                v-for="message in offeringErrors[row.id]"
+                :key="message"
+                class="field-error"
+              >
+                {{ message }}
+              </p></template
             ></el-table-column
           ><el-table-column
             label="上课时间"
@@ -200,6 +336,26 @@ onUnmounted(() => generation++)
                 {{ m }}
               </p></template
             ></el-table-column
+          ><el-table-column
+            label="方案状态"
+            min-width="130"
+            ><template #default="{ row }">
+              <el-tag
+                v-if="selected.includes(row.id) && !plan.selectedOfferingIds.includes(row.id)"
+                size="small"
+                type="warning"
+                >待新增</el-tag
+              >
+              <el-tag
+                v-else-if="!selected.includes(row.id) && plan.selectedOfferingIds.includes(row.id)"
+                size="small"
+                type="warning"
+                >待取消</el-tag
+              >
+              <span v-else>{{
+                plan.selectedOfferingIds.includes(row.id) ? '已保存' : label(row.status)
+              }}</span>
+            </template></el-table-column
           ><el-table-column
             label="当前教师"
             min-width="110"
@@ -215,6 +371,10 @@ onUnmounted(() => generation++)
           ></el-table
         ></el-checkbox-group
       >
+      <el-empty
+        v-if="!selectedId && !semesterLoading && !semesterError"
+        description="暂无可选择授课的学期"
+      />
       <p class="tiny muted">
         资格、教师占用和时间冲突均在服务端最终校验，任一失败时原授课安排保持不变。
       </p>

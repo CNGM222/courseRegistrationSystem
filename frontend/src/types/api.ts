@@ -156,6 +156,17 @@ export interface Roster {
   students: RosterStudent[]
 }
 
+export interface RegistrarRoster {
+  semesterId: string
+  offering: Offering
+  students: {
+    enrollmentId: string
+    studentId: string
+    studentName: string
+    source: 'PRIMARY' | 'ALTERNATE'
+  }[]
+}
+
 export interface PersonRecord {
   id: string
   accountId?: string

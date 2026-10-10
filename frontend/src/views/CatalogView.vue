@@ -3,7 +3,8 @@ import { useSemesters } from '../composables/useSemesters'
 import SemesterSelect from '../components/SemesterSelect.vue'
 import CatalogBrowser from '../components/CatalogBrowser.vue'
 import ErrorNotice from '../components/ErrorNotice.vue'
-const { choices, selectedId, error, load } = useSemesters()
+import EmptyState from '../components/EmptyState.vue'
+const { choices, selectedId, error, loading, load } = useSemesters()
 </script>
 <template>
   <div class="page-heading">
@@ -14,11 +15,15 @@ const { choices, selectedId, error, load } = useSemesters()
     <SemesterSelect
       v-model="selectedId"
       :semesters="choices"
+      :disabled="loading"
     />
   </div>
   <ErrorNotice
     :error="error"
     retry
     @retry="load"
-  /><CatalogBrowser :semester-id="selectedId" />
+  />
+  <p v-if="loading" role="status" class="muted">正在读取学期…</p>
+  <EmptyState v-else-if="!error && !choices.length" title="暂无可查询学期" />
+  <CatalogBrowser v-else-if="!error" :semester-id="selectedId" />
 </template>

@@ -1,10 +1,31 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import type { Schedule } from '../types/api'
 import { label, meetsText, weekdays } from '../utils/format'
-defineProps<{ schedule: Schedule | null }>()
+const props = defineProps<{ schedule: Schedule | null; history?: boolean }>()
 const mode = ref('list'),
   week = ref(1)
+const effectiveEnrollments = computed(
+  () => props.schedule?.enrollments.filter((e) => e.state === 'ENROLLED') || [],
+)
+const lastWeek = computed(() =>
+  Math.max(
+    1,
+    ...effectiveEnrollments.value.flatMap((e) => (e.offering?.meetings || []).map((m) => m.weekNo)),
+  ),
+)
+const hasWeekMeetings = computed(() =>
+  effectiveEnrollments.value.some((e) => e.offering?.meetings.some((m) => m.weekNo === week.value)),
+)
+watch(
+  () => props.schedule?.semesterId,
+  () => {
+    week.value = 1
+  },
+)
+watch(lastWeek, (value) => {
+  week.value = Math.min(week.value, value)
+})
 </script>
 <template>
   <div
@@ -37,10 +58,15 @@ const mode = ref('list'),
           ><el-input-number
             v-model="week"
             :min="1"
-            :max="30"
+            :max="lastWeek"
             size="small"
+            aria-label="教学周"
           />
         </div>
+        <el-empty
+          v-if="!hasWeekMeetings"
+          :description="`第 ${week} 周没有已注册课程的上课安排`"
+        />
         <div class="timeline">
           <div
             v-for="(d, index) in weekdays"
@@ -49,7 +75,7 @@ const mode = ref('list'),
           >
             <h4>星期{{ d }}</h4>
             <template
-              v-for="e in schedule.enrollments.filter((e) => e.state === 'ENROLLED')"
+              v-for="e in effectiveEnrollments"
               :key="e.id"
               ><div
                 v-for="(m, j) in (e.offering?.meetings || []).filter(
@@ -69,7 +95,7 @@ const mode = ref('list'),
         </div></template
       ><el-table
         v-else
-        :data="schedule.enrollments.filter((e) => e.state === 'ENROLLED')"
+        :data="effectiveEnrollments"
         empty-text="尚无有效注册课程，草稿与备选不在此处占位"
         ><el-table-column
           label="课程"
@@ -110,11 +136,19 @@ const mode = ref('list'),
           :key="e.id"
           class="history-row"
         >
-          <span>{{ e.offering?.courseName || e.offeringId }}</span
+          <span
+            >{{ e.offering?.courseName || e.offeringId
+            }}<span
+              v-if="e.offering"
+              class="tiny muted"
+            >
+              · {{ e.offering.courseCode }} · {{ e.offering.sectionCode }} 班</span
+            ></span
           ><el-tag
             type="info"
             size="small"
-            >{{ label(e.state) }} · {{ label(e.reason) }}</el-tag
+            >{{ label(e.state)
+            }}<template v-if="e.reason"> · {{ label(e.reason) }}</template></el-tag
           >
         </div></template
       >
@@ -125,7 +159,8 @@ const mode = ref('list'),
     class="surface"
   >
     <div class="empty-state">
-      <strong>本学期还没有课表</strong>完成选课提交后，可在此查看有效课程。
+      <strong>{{ history ? '该学期没有选课记录' : '本学期还没有课表' }}</strong>
+      {{ history ? '可切换其他已结束学期查看。' : '完成选课提交后，可在此查看有效课程。' }}
     </div>
   </div>
 </template>
