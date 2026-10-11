@@ -6,6 +6,7 @@ export const labels: Record<string, string> = {
   PROFESSOR: '教师',
   REGISTRAR: '教务员',
   OPEN: '开放中',
+  REGISTRATION_ENDED: '已截止，待结算',
   CLOSED: '已关闭',
   PREPARATION: '准备中',
   CANCELLED: '已取消',

@@ -100,6 +100,17 @@ export const api = {
       }),
   },
   registrar: {
+    updateRegistrationDeadline: (semesterId: string, addDropEnd: string, version: number) =>
+      request<Semester>(`/registrar/semesters/${semesterId}/registration-deadline`, {
+        method: 'PUT',
+        headers: withIfMatch(undefined, version),
+        body: JSON.stringify({ addDropEnd }),
+      }),
+    cutoffRegistration: (semesterId: string, version: number) =>
+      request<Semester>(`/registrar/semesters/${semesterId}/cutoff`, {
+        method: 'POST',
+        headers: withIfMatch(undefined, version),
+      }),
     finalRoster: (semesterId: string, offeringId: string) =>
       request<RegistrarRoster>(
         `/registrar/semesters/${encodeURIComponent(semesterId)}/offerings/${encodeURIComponent(offeringId)}/roster`,
@@ -117,6 +128,12 @@ export const api = {
         method: 'PUT',
         headers: withIfMatch(undefined, version),
         body: JSON.stringify(body),
+      }),
+    resetStudentPassword: (id: string, password: string, accountVersion: number) =>
+      request<PersonRecord>(`/registrar/students/${id}/password`, {
+        method: 'POST',
+        headers: withIfMatch(undefined, accountVersion),
+        body: JSON.stringify({ password }),
       }),
     deleteStudent: (id: string, version: number) =>
       request<void>(`/registrar/students/${id}`, {
@@ -137,6 +154,12 @@ export const api = {
         method: 'PUT',
         headers: withIfMatch(undefined, version),
         body: JSON.stringify(body),
+      }),
+    resetProfessorPassword: (id: string, password: string, accountVersion: number) =>
+      request<PersonRecord>(`/registrar/professors/${id}/password`, {
+        method: 'POST',
+        headers: withIfMatch(undefined, accountVersion),
+        body: JSON.stringify({ password }),
       }),
     deleteProfessor: (id: string, version: number) =>
       request<void>(`/registrar/professors/${id}`, {

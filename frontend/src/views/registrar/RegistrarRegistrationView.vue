@@ -30,9 +30,17 @@ const error = ref<unknown>(null),
   verified = ref(false),
   uncertain = ref(false),
   confirming = ref(false),
+  deadlineDialog = ref(false),
+  deadlineLocal = ref(''),
+  deadlineError = ref(''),
   eventsUpdatedAt = ref<string | null>(null),
   now = ref(Date.now())
-const registrationStatus = computed(() => (result.value ? 'CLOSED' : current.value?.status))
+const registrationStatus = computed(() => {
+  if (result.value) return 'CLOSED'
+  if (current.value?.status === 'OPEN' && now.value >= Date.parse(current.value.addDropEnd))
+    return 'REGISTRATION_ENDED'
+  return current.value?.status
+})
 const rosterVisible = ref(false),
   roster = ref<RegistrarRoster | null>(null),
   rosterLoading = ref(false),
@@ -51,12 +59,116 @@ const canClose = computed(
     !busy.value &&
     !loading.value,
 )
+const canEditDeadline = computed(
+  () =>
+    verified.value &&
+    !result.value &&
+    !uncertain.value &&
+    (current.value?.status === 'PREPARATION' || current.value?.status === 'OPEN') &&
+    !busy.value &&
+    !confirming.value &&
+    !semesterLoading.value,
+)
+const canCutoff = computed(
+  () =>
+    canEditDeadline.value &&
+    current.value?.status === 'OPEN' &&
+    now.value < Date.parse(current.value.addDropEnd),
+)
 let generation = 0,
   billingGeneration = 0,
   rosterGeneration = 0,
   active = true,
   timer: ReturnType<typeof setInterval>,
   clock: ReturnType<typeof setInterval>
+function shanghaiDateTimeInput(value: string) {
+  if (!value || Number.isNaN(Date.parse(value))) return ''
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Shanghai',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      hourCycle: 'h23',
+    })
+      .formatToParts(new Date(value))
+      .map(({ type, value }) => [type, value]),
+  )
+  return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}`
+}
+function openDeadlineDialog() {
+  if (!canEditDeadline.value || !current.value) return
+  deadlineLocal.value = shanghaiDateTimeInput(current.value.addDropEnd)
+  deadlineError.value = ''
+  deadlineDialog.value = true
+}
+async function reconcileControl(semesterId: string) {
+  await reloadSemesters()
+  if (active && selectedId.value === semesterId && !semesterError.value) await loadResult()
+}
+async function saveDeadline() {
+  if (!canEditDeadline.value || !current.value) return
+  const semesterId = selectedId.value
+  const version = current.value.version
+  const timestamp = Date.parse(`${deadlineLocal.value}:00+08:00`)
+  if (!Number.isFinite(timestamp)) {
+    deadlineError.value = '请选择有效的截止时间'
+    return
+  }
+  if (timestamp <= Date.parse(current.value.registrationStart)) {
+    deadlineError.value = '截止时间必须晚于选课开始时间'
+    return
+  }
+  const addDropEnd = new Date(timestamp).toISOString()
+  busy.value = true
+  error.value = null
+  deadlineError.value = ''
+  let failure: unknown = null
+  try {
+    await api.registrar.updateRegistrationDeadline(semesterId, addDropEnd, version)
+    deadlineDialog.value = false
+  } catch (e) {
+    failure = e
+  }
+  await reconcileControl(semesterId)
+  if (failure && active && selectedId.value === semesterId) error.value = failure
+  else if (!failure && active && selectedId.value === semesterId)
+    ElMessage.success('加退课截止时间已更新')
+  busy.value = false
+}
+async function cutoffRegistration() {
+  if (!canCutoff.value || !current.value || confirming.value) return
+  const semesterId = selectedId.value
+  const version = current.value.version
+  const semesterName = current.value.name
+  confirming.value = true
+  try {
+    await ElMessageBox.confirm(
+      `立即截止“${semesterName}”的选课和授课调整？截止后学生不能再修改、提交或撤销课表，教师不能再调整授课。此操作不会执行最终名单处理或生成计费通知。`,
+      '立即截止选课',
+      { confirmButtonText: '立即截止', cancelButtonText: '取消', type: 'warning' },
+    )
+  } catch {
+    return
+  } finally {
+    confirming.value = false
+  }
+  if (!active || selectedId.value !== semesterId || !canCutoff.value) return
+  busy.value = true
+  error.value = null
+  let failure: unknown = null
+  try {
+    await api.registrar.cutoffRegistration(semesterId, version)
+  } catch (e) {
+    failure = e
+  }
+  await reconcileControl(semesterId)
+  if (failure && active && selectedId.value === semesterId) error.value = failure
+  else if (!failure && active && selectedId.value === semesterId) ElMessage.success('选课已截止')
+  busy.value = false
+}
 async function loadEvents() {
   if (!active || !selectedId.value || !result.value) return
   const token = ++billingGeneration
@@ -158,7 +270,7 @@ async function loadResult() {
   }
 }
 async function refresh() {
-  if (busy.value || confirming.value) return
+  if (busy.value || confirming.value || deadlineDialog.value) return
   await reloadSemesters()
   if (semesterError.value) return
   await loadResult()
@@ -214,6 +326,8 @@ watch(selectedId, () => {
   billingGeneration++
   page.value = 1
   state.value = ''
+  deadlineDialog.value = false
+  deadlineError.value = ''
   void loadResult()
 })
 watch(state, () => {
@@ -254,7 +368,7 @@ onUnmounted(() => {
     <SemesterSelect
       v-model="selectedId"
       :semesters="choices"
-      :disabled="busy || confirming"
+      :disabled="busy || confirming || deadlineDialog"
     />
   </div>
   <ErrorNotice
@@ -306,7 +420,7 @@ onUnmounted(() => {
       <strong>注册控制</strong
       ><el-button
         :loading="loading"
-        :disabled="busy || confirming"
+        :disabled="busy || confirming || deadlineDialog"
         @click="refresh"
         >查询最新结果</el-button
       >
@@ -328,8 +442,20 @@ onUnmounted(() => {
           >{{ dateTime(result.closedAt) }}</el-descriptions-item
         ></el-descriptions
       ><el-alert
-        v-if="registrationStatus !== 'CLOSED'"
-        title="到加退课截止后方可关闭。正在执行的选课或授课变更会阻止本次关闭，可稍后重新查询并重试。"
+        v-if="registrationStatus === 'REGISTRATION_ENDED'"
+        title="选课已截止。可以关闭注册完成最终名额处理和计费，也可以修改截止时间重新开放。"
+        type="warning"
+        :closable="false"
+        show-icon
+      /><el-alert
+        v-else-if="current.status === 'PREPARATION'"
+        title="学期尚未开放；可在此调整加退课截止时间。"
+        type="info"
+        :closable="false"
+        show-icon
+      /><el-alert
+        v-else-if="registrationStatus !== 'CLOSED'"
+        title="到加退课截止后方可关闭。截止后可执行最终名额处理和计费。"
         type="warning"
         :closable="false"
         show-icon
@@ -353,6 +479,18 @@ onUnmounted(() => {
         style="margin-top: 18px"
       >
         <el-button
+          v-if="current.status !== 'CLOSED'"
+          :disabled="!canEditDeadline || confirming"
+          @click="openDeadlineDialog"
+          >修改截止时间</el-button
+        ><el-button
+          v-if="current.status === 'OPEN' && now < Date.parse(current.addDropEnd)"
+          type="warning"
+          :disabled="!canCutoff || confirming"
+          @click="cutoffRegistration"
+          >立即截止选课</el-button
+        >
+        <el-button
           v-if="registrationStatus !== 'CLOSED'"
           type="danger"
           :loading="busy"
@@ -367,6 +505,32 @@ onUnmounted(() => {
       </div>
     </div>
   </section>
+  <el-dialog
+    v-model="deadlineDialog"
+    title="修改加退课截止时间"
+    width="460px"
+    :close-on-click-modal="false"
+    :show-close="!busy"
+  >
+    <el-form @submit.prevent="saveDeadline">
+      <el-form-item label="截止时间（北京时间）" :error="deadlineError">
+        <el-input
+          v-model="deadlineLocal"
+          type="datetime-local"
+          step="60"
+          :min="shanghaiDateTimeInput(current?.registrationStart || '')"
+          aria-label="截止时间（北京时间）"
+          @input="deadlineError = ''"
+        />
+      </el-form-item>
+    </el-form>
+    <template #footer>
+      <el-button :disabled="busy" @click="deadlineDialog = false">取消</el-button>
+      <el-button type="primary" :loading="busy" :disabled="!deadlineLocal" @click="saveDeadline">
+        保存截止时间
+      </el-button>
+    </template>
+  </el-dialog>
   <section
     class="surface"
     v-if="result"

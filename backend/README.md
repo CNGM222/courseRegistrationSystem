@@ -76,7 +76,7 @@ $env:APP_PROVISION_PASSWORD = 'change-this-password'
 java -jar target/backend-0.0.1-SNAPSHOT.jar
 ```
 
-该命令为已有账号设置密码，或创建新的教务员账号；不会创建新的学生/教师资料。教务新增师生时先生成不可用的随机密码，再由此命令完成受控初始化。学生和教师账号的角色及关联资料保持不变。执行后关闭终端，避免管理变量影响后续 Web 启动。
+该命令为已有账号设置密码，或创建新的教务员账号；不会创建新的学生/教师资料。教务员可在新增师生资料时设置初始密码，并通过师生维护接口重置密码。密码使用 BCrypt 摘要保存；重置会清除登录失败计数和锁定状态，并撤销该账号现有会话。执行后关闭终端，避免管理变量影响后续 Web 启动。
 
 同步目录时使用 `APP_OPERATION=sync-catalog` 和 `APP_SYNC_SEMESTER_ID`，同样禁用 Web。目录适配器支持 `CATALOG_SOURCE=legacy` 及默认的 `mock`；mock 需配置 `CATALOG_MOCK_FILE` 为 JSON 文件路径。没有可用发布快照、或开放学期快照验证时间超过 24 小时时 API 返回 `503 CATALOG_UNAVAILABLE`。准备期同步可发布目录；开放后数据变化只暂存，不覆盖选课引用的快照。
 

@@ -5,8 +5,10 @@ import com.gm222.courseregistrationsystem.model.dto.ApiDtos.*;
 import com.gm222.courseregistrationsystem.service.billing.BillingQueryService;
 import com.gm222.courseregistrationsystem.service.closing.RegistrationCloseService;
 import com.gm222.courseregistrationsystem.service.identity.AuthService;
+import com.gm222.courseregistrationsystem.service.registration.RegistrationControlService;
 import com.gm222.courseregistrationsystem.service.teaching.RosterService;
 import com.gm222.courseregistrationsystem.web.WebValues;
+import jakarta.validation.Valid;
 import org.springframework.http.CacheControl;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -16,15 +18,41 @@ import org.springframework.web.bind.annotation.*;
 public class RegistrarClosingController {
   private final RegistrationCloseService close;
   private final BillingQueryService billing;
+  private final RegistrationControlService control;
   private final AuthService auth;
   private final RosterService rosters;
 
   public RegistrarClosingController(
-      RegistrationCloseService close, BillingQueryService billing, AuthService auth, RosterService rosters) {
+      RegistrationCloseService close,
+      BillingQueryService billing,
+      RegistrationControlService control,
+      AuthService auth,
+      RosterService rosters) {
     this.close = close;
     this.billing = billing;
+    this.control = control;
     this.auth = auth;
     this.rosters = rosters;
+  }
+
+  @PutMapping("/registration-deadline")
+  public ResponseEntity<ApiResponse<SemesterView>> updateDeadline(
+      @PathVariable String semesterId,
+      @Valid @RequestBody RegistrationDeadlineCommand body,
+      @RequestHeader(value = "If-Match", required = false) String match) {
+    var result =
+        control.updateDeadline(
+            auth.current(), WebValues.id(semesterId), body, WebValues.version(match));
+    return WebValues.versioned(result, result.version());
+  }
+
+  @PostMapping("/cutoff")
+  public ResponseEntity<ApiResponse<SemesterView>> cutoff(
+      @PathVariable String semesterId,
+      @RequestHeader(value = "If-Match", required = false) String match) {
+    var result =
+        control.cutoffNow(auth.current(), WebValues.id(semesterId), WebValues.version(match));
+    return WebValues.versioned(result, result.version());
   }
 
   @PostMapping("/close")

@@ -17,6 +17,7 @@ import com.gm222.courseregistrationsystem.service.registration.*;
 import com.gm222.courseregistrationsystem.service.teaching.*;
 import java.math.BigDecimal;
 import java.time.*;
+import java.time.temporal.ChronoUnit;
 import java.util.*;
 import java.util.concurrent.*;
 import javax.sql.DataSource;
@@ -26,6 +27,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.security.crypto.password.PasswordEncoder;
 
 @SpringBootTest
 @ActiveProfiles("test")
@@ -40,6 +42,8 @@ class BusinessWorkflowTests {
   @Autowired RosterService rosters;
   @Autowired TeachingAssignmentService teaching;
   @Autowired PersonService people;
+  @Autowired RegistrationControlService registrationControl;
+  @Autowired PasswordEncoder passwords;
   @Autowired CatalogQueryService catalog;
   @Autowired OutboxDispatcher outbox;
   @Autowired DataSource datasource;
@@ -260,6 +264,41 @@ class BusinessWorkflowTests {
   }
 
   @Test
+  void registrarCanChangeDeadlineAndCutOffWritesBeforeFinalClosure() {
+    var version =
+        tx.execute(status -> db.get(Semester.class, f.semester).getVersion());
+    var updated =
+        registrationControl.updateDeadline(
+            f.registrar,
+            f.semester,
+            new RegistrationDeadlineCommand(time.now().plusDays(4).atOffset(ZoneOffset.UTC)),
+            version);
+    assertThat(updated.version()).isGreaterThan(version);
+    assertThat(OffsetDateTime.parse(updated.addDropEnd()).truncatedTo(ChronoUnit.SECONDS))
+        .isEqualTo(time.now().plusDays(4).atOffset(ZoneOffset.UTC).truncatedTo(ChronoUnit.SECONDS));
+
+    var saved = schedules.saveDraft(f.student, f.semester, draft(0), null);
+    var cutOff = registrationControl.cutoffNow(f.registrar, f.semester, updated.version());
+    assertThat(OffsetDateTime.parse(cutOff.addDropEnd()))
+        .isBeforeOrEqualTo(time.now().atOffset(ZoneOffset.UTC));
+    assertThatThrownBy(
+            () -> schedules.saveDraft(f.student, f.semester, draft(1), saved.version()))
+        .isInstanceOf(BusinessException.class)
+        .extracting("code")
+        .isEqualTo("REGISTRATION_CLOSED");
+    assertThat(close.close(f.registrar, f.semester).semesterId()).isEqualTo(f.semester.toString());
+    assertThatThrownBy(
+            () -> registrationControl.updateDeadline(
+                f.registrar,
+                f.semester,
+                new RegistrationDeadlineCommand(time.now().plusDays(5).atOffset(ZoneOffset.UTC)),
+                cutOff.version()))
+        .isInstanceOf(BusinessException.class)
+        .extracting("code")
+        .isEqualTo("REGISTRATION_ALREADY_CLOSED");
+  }
+
+  @Test
   void onlyDraftsExpireWithoutBilling() {
     schedules.saveDraft(f.student, f.semester, draft(0), null);
     expired();
@@ -431,9 +470,15 @@ class BusinessWorkflowTests {
                     "ACTIVE",
                     null,
                     null,
-                    ssn))
+                    ssn,
+                    "initial-password-123"))
             .data();
     assertThat(p.ssnMasked()).isEqualTo("***-**-" + ssn.substring(5));
+    assertThat(
+            tx.<Boolean>execute(
+                status -> passwords.matches(
+                    "initial-password-123", db.get(Account.class, Long.parseLong(p.accountId())).getPasswordHash())))
+        .isTrue();
     assertThatThrownBy(
             () ->
                 people.create(
@@ -446,7 +491,8 @@ class BusinessWorkflowTests {
                         "ACTIVE",
                         null,
                         "CS",
-                        ssn)))
+                        ssn,
+                        "initial-password-456")))
         .isInstanceOf(BusinessException.class);
     submitted();
     var student = people.get(f.registrar, "students", f.student.personId());
@@ -457,9 +503,62 @@ class BusinessWorkflowTests {
                     "students",
                     f.student.personId(),
                     new PersonCommand(
-                        null, "停用", student.birthDate(), "INACTIVE", null, null, null),
+                        null, "停用", student.birthDate(), "INACTIVE", null, null, null, null),
                     student.version()))
         .isInstanceOf(BusinessException.class);
+  }
+
+  @Test
+  void registrarCanResetStudentAndProfessorPasswordsWithAccountVersions() {
+    var student = people.get(f.registrar, "students", f.student.personId());
+    var resetStudent =
+        people.resetPassword(
+            f.registrar,
+            "students",
+            f.student.personId(),
+            new PasswordCommand("changed-student-password"),
+            student.accountVersion());
+    assertThat(resetStudent.data().accountVersion()).isGreaterThan(student.accountVersion());
+    assertThatThrownBy(
+            () -> people.resetPassword(
+                f.registrar,
+                "students",
+                f.student.personId(),
+                new PasswordCommand("another-student-password"),
+                student.accountVersion()))
+        .isInstanceOf(BusinessException.class)
+        .extracting("status")
+        .isEqualTo(412);
+
+    var professor =
+        people
+            .create(
+                f.registrar,
+                "professors",
+                new PersonCommand(
+                    "reset-p-" + UUID.randomUUID(),
+                    "新教师",
+                    LocalDate.of(1980, 1, 1),
+                    "ACTIVE",
+                    null,
+                    "CS",
+                    null,
+                    "initial-professor-password"))
+            .data();
+    var resetProfessor =
+        people.resetPassword(
+            f.registrar,
+            "professors",
+            Long.parseLong(professor.id()),
+            new PasswordCommand("changed-professor-password"),
+            professor.accountVersion());
+    assertThat(
+            tx.<Boolean>execute(
+                status -> passwords.matches(
+                    "changed-professor-password",
+                    db.get(Account.class, Long.parseLong(resetProfessor.data().accountId()))
+                        .getPasswordHash())))
+        .isTrue();
   }
 
   @Test

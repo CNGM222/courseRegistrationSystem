@@ -177,6 +177,7 @@ export interface PersonRecord {
   graduationDate?: string | null
   department?: string
   ssnMasked?: string | null
+  accountVersion: number
   version: number
 }
 

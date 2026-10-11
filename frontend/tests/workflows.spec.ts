@@ -216,7 +216,10 @@ test('手机导航可用且页面不横向溢出', async ({ page }) => {
 test('教师选择提交完整授课集合并带版本', async ({ page }) => {
   const state = await setup(page, 'PROFESSOR')
   await page.goto('/professor/teaching')
-  await page.getByRole('checkbox', { name: '选择数据库原理01班' }).check()
+  await page
+    .getByRole('checkbox', { name: '选择数据库原理01班' })
+    .locator('xpath=ancestor::label')
+    .click()
   await page.getByRole('button', { name: '保存授课方案', exact: true }).click()
   await page.getByRole('button', { name: '保存方案', exact: true }).click()
   await expect.poll(() => state.teaching.selectedOfferingIds).toEqual(['100', '101'])
@@ -252,6 +255,8 @@ test('新增师生允许空 SSN，教师院系和日期需完整', async ({ page
   await page.getByRole('button', { name: '新增教师', exact: true }).click()
   const dialog = page.getByRole('dialog')
   await dialog.getByLabel('登录账号', { exact: true }).fill('newprof')
+  await dialog.getByLabel('初始密码', { exact: true }).fill('teacher-initial-password')
+  await dialog.getByLabel('确认初始密码', { exact: true }).fill('teacher-initial-password')
   await dialog.getByLabel('姓名', { exact: true }).fill('新教师')
   await page.getByRole('button', { name: '保存', exact: true }).click()
   await expect(page.getByText('请选择出生日期', { exact: true })).toBeVisible()
@@ -266,7 +271,8 @@ test('新增师生允许空 SSN，教师院系和日期需完整', async ({ page
   await page.getByRole('button', { name: '保存', exact: true }).click()
   await expect.poll(() => state.newPerson).not.toBeNull()
   expect(state.newPerson).not.toHaveProperty('socialSecurityNumber')
-  expect(state.newPerson).not.toHaveProperty('password')
+  expect(state.newPerson.password).toBe('teacher-initial-password')
+  expect(state.newPerson).not.toHaveProperty('passwordConfirm')
 })
 test('主动退出清除工作方案，重新登录不恢复', async ({ page }) => {
   const state = await setup(page)

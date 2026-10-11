@@ -3,6 +3,7 @@ package com.gm222.courseregistrationsystem.model.dto;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.*;
 import java.time.LocalDate;
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
 
@@ -42,6 +43,8 @@ public final class ApiDtos {
       String status,
       String currency,
       long version) {}
+
+  public record RegistrationDeadlineCommand(@NotNull OffsetDateTime addDropEnd) {}
 
   public record Meeting(
       int weekNo, int weekday, int startPeriod, int endPeriodExclusive, String room) {}
@@ -185,10 +188,18 @@ public final class ApiDtos {
       @NotBlank String status,
       LocalDate graduationDate,
       @Size(max = 100) String department,
-      @Size(max = 11) String socialSecurityNumber) {
+      @Size(max = 11) String socialSecurityNumber,
+      @Size(max = 128) String password) {
     @Override
     public String toString() {
       return "PersonCommand[personalData=<redacted>]";
+    }
+  }
+
+  public record PasswordCommand(@NotBlank @Size(min = 12, max = 128) String password) {
+    @Override
+    public String toString() {
+      return "PasswordCommand[credentials=<redacted>]";
     }
   }
 
@@ -202,6 +213,7 @@ public final class ApiDtos {
       LocalDate graduationDate,
       String department,
       String ssnMasked,
+      long accountVersion,
       long version) {}
 
   public record ClosedOffering(

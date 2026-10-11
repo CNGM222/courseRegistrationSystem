@@ -125,6 +125,77 @@ test('关闭请求连接中断必须查询结果，查询成功不会重放关�
   expect(closeWrites).toBe(1)
 })
 
+test('教务员可修改加退课截止时间并立即截止选课而不提前结算', async ({ page }) => {
+  const state = await setup(page, 'REGISTRAR')
+  let update: { body: { addDropEnd: string }; ifMatch: string | undefined } | null = null
+  await page.route('**/api/v1/registrar/semesters/1/registration-deadline', async (route) => {
+    update = {
+      body: route.request().postDataJSON(),
+      ifMatch: route.request().headers()['if-match'],
+    }
+    state.semesters[0].addDropEnd = update.body.addDropEnd
+    state.semesters[0].version++
+    await route.fulfill({ json: { data: state.semesters[0] } })
+  })
+  await page.goto('/registrar/registration')
+  await page.getByRole('button', { name: '修改截止时间', exact: true }).click()
+  const deadlineDialog = page.getByRole('dialog', { name: '修改加退课截止时间' })
+  const localDeadline = new Date(Date.now() + 20 * 86400000 + 8 * 3600000)
+    .toISOString()
+    .slice(0, 16)
+  await deadlineDialog.getByLabel('截止时间（北京时间）').fill(localDeadline)
+  await deadlineDialog.getByRole('button', { name: '保存截止时间', exact: true }).click()
+  await expect(deadlineDialog).toHaveCount(0)
+  expect(update?.ifMatch).toBe('"0"')
+  expect(Date.parse(update!.body.addDropEnd)).toBeGreaterThan(Date.now())
+  expect(Date.parse(update!.body.addDropEnd)).toBeGreaterThan(Date.parse(state.semesters[0].registrationStart))
+
+  await page.getByRole('button', { name: '立即截止选课', exact: true }).click()
+  await page.getByRole('button', { name: '立即截止', exact: true }).click()
+  await expect(page.locator('.stat-value').first()).toHaveText('已截止，待结算')
+  await expect(page.getByRole('button', { name: '关闭注册', exact: true })).toBeEnabled()
+  expect(state.cutoffCount).toBe(1)
+  expect(state.closeCount).toBe(0)
+})
+
+test('教务员可直接重置学生密码，使用账号版本并要求确认两次输入', async ({ page }) => {
+  const state = await setup(page, 'REGISTRAR')
+  await page.goto('/registrar/students')
+  await page.getByRole('button', { name: '重置密码', exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: '重置登录密码' })
+  await dialog.getByLabel('新密码', { exact: true }).fill('new-student-login-password')
+  await dialog.getByLabel('确认新密码', { exact: true }).fill('new-student-login-password')
+  await dialog.getByRole('button', { name: '保存新密码', exact: true }).click()
+  await expect(dialog).toHaveCount(0)
+  expect(state.passwordResets).toEqual([
+    {
+      kind: 'students',
+      id: '200',
+      password: 'new-student-login-password',
+      accountVersion: '"0"',
+    },
+  ])
+})
+
+test('教务员可直接重置教师密码', async ({ page }) => {
+  const state = await setup(page, 'REGISTRAR')
+  await page.goto('/registrar/professors')
+  await page.getByRole('button', { name: '重置密码', exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: '重置登录密码' })
+  await dialog.getByLabel('新密码', { exact: true }).fill('new-professor-login-password')
+  await dialog.getByLabel('确认新密码', { exact: true }).fill('new-professor-login-password')
+  await dialog.getByRole('button', { name: '保存新密码', exact: true }).click()
+  await expect(dialog).toHaveCount(0)
+  expect(state.passwordResets).toEqual([
+    {
+      kind: 'professors',
+      id: '200',
+      password: 'new-professor-login-password',
+      accountVersion: '"0"',
+    },
+  ])
+})
+
 test('财务筛选和分页请求正确，恢复焦点即时刷新送达状态', async ({ page }) => {
   const state = await setup(page, 'REGISTRAR')
   state.closeResult = closedResult()
@@ -157,7 +228,10 @@ test('财务筛选和分页请求正确，恢复焦点即时刷新送达状态',
   })
   await page.goto('/registrar/registration')
   await expect(page.getByText('财务测试学生', { exact: true })).toBeVisible()
-  await page.getByRole('combobox', { name: '筛选通知状态' }).click()
+  await page
+    .locator('.el-select')
+    .filter({ has: page.getByRole('combobox', { name: '筛选通知状态' }) })
+    .click()
   await page.getByRole('option', { name: '等待重试', exact: true }).click()
   await expect.poll(() => reads.at(-1)).toEqual({ state: 'RETRY', page: '1' })
   await page.getByRole('button', { name: '下一页', exact: true }).click()
@@ -167,7 +241,7 @@ test('财务筛选和分页请求正确，恢复焦点即时刷新送达状态',
   const count = reads.length
   await page.evaluate(() => window.dispatchEvent(new Event('focus')))
   await expect.poll(() => reads.length).toBe(count + 1)
-  await expect(page.getByText('已送达', { exact: true })).toBeVisible()
+  await expect(page.locator('.el-table .el-tag').filter({ hasText: '已送达' })).toBeVisible()
   await expect(page.getByText('财务暂不可用', { exact: true })).toHaveCount(0)
 })
 
@@ -213,10 +287,13 @@ test('师生删除连接中断后禁止重复删除，重新查询后恢复操�
   })
   await page.goto('/registrar/students')
   await page.getByRole('button', { name: '删除', exact: true }).click()
-  await page.getByRole('dialog').getByRole('button', { name: '删除', exact: true }).click()
+  const confirmation = page.getByRole('dialog', { name: '确认删除' })
+  await confirmation.getByRole('button', { name: '删除', exact: true }).click()
+  await expect(confirmation).toHaveCount(0)
   await expect(page.getByText(/删除结果或资料版本尚未确认/)).toBeVisible()
-  await expect(page.getByRole('button', { name: '删除', exact: true })).toBeDisabled()
+  const deleteAction = page.locator('.el-table').getByRole('button', { name: '删除', exact: true })
+  await expect(deleteAction).toBeDisabled()
   await page.getByRole('button', { name: '重新加载', exact: true }).click()
-  await expect(page.getByRole('button', { name: '删除', exact: true })).toBeEnabled()
+  await expect(deleteAction).toBeEnabled()
   expect(deletes).toBe(1)
 })

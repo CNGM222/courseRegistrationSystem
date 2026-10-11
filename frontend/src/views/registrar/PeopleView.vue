@@ -23,6 +23,11 @@ const visible = ref(false),
   blocked = ref(false),
   listNeedsVerification = ref(false),
   baseline = ref('')
+const resetVisible = ref(false),
+  resetTarget = ref<PersonRecord | null>(null),
+  resetPasswordValue = ref(''),
+  resetPasswordConfirm = ref(''),
+  resetError = ref<unknown>(null)
 const form = reactive({
   username: '',
   name: '',
@@ -31,6 +36,8 @@ const form = reactive({
   graduationDate: '' as string | null,
   department: '',
   socialSecurityNumber: '',
+  password: '',
+  passwordConfirm: '',
 })
 type PersonField = keyof typeof form
 const fieldErrors = reactive<Partial<Record<PersonField, string>>>({})
@@ -60,6 +67,13 @@ for (const field of Object.keys(form) as PersonField[])
       if (!blocked.value) formError.value = null
     },
   )
+watch(
+  () => form.password,
+  () => {
+    if (visible.value && !editing.value && form.passwordConfirm)
+      void formRef.value?.validateField('passwordConfirm').catch(() => undefined)
+  },
+)
 const dirty = computed(() => visible.value && JSON.stringify(form) !== baseline.value)
 const { confirmLeave } = useDirtyGuard(dirty)
 const rules: FormRules = {
@@ -99,6 +113,28 @@ const rules: FormRules = {
         !value || /^(?:\d{9}|\d{3}-\d{2}-\d{4})$/.test(value)
           ? callback()
           : callback(new Error('请输入九位数字或 XXX-XX-XXXX 格式')),
+      trigger: 'blur',
+    },
+  ],
+  password: [
+    { required: true, message: '请设置至少 12 个字符的初始密码', trigger: 'blur' },
+    {
+      validator: (_r, value: string, callback) => {
+        if (!value || value.length < 12)
+          callback(new Error('密码至少需要 12 个字符'))
+        else if (new TextEncoder().encode(value).length > 72)
+          callback(new Error('密码不得超过 72 个 UTF-8 字节'))
+        else callback()
+      },
+      trigger: 'blur',
+    },
+  ],
+  passwordConfirm: [
+    {
+      validator: (_r, value: string, callback) =>
+        value && value === form.password
+          ? callback()
+          : callback(new Error('两次输入的密码不一致')),
       trigger: 'blur',
     },
   ],
@@ -148,6 +184,8 @@ function fill(person: PersonRecord | null) {
     graduationDate: person?.graduationDate || null,
     department: person?.department || '',
     socialSecurityNumber: '',
+    password: '',
+    passwordConfirm: '',
   })
   baseline.value = JSON.stringify(form)
   visible.value = true
@@ -171,6 +209,8 @@ async function closeForm(done?: () => void) {
   if (await confirmLeave()) {
     visible.value = false
     form.socialSecurityNumber = ''
+    form.password = ''
+    form.passwordConfirm = ''
     editing.value = null
     done?.()
   }
@@ -185,6 +225,7 @@ async function submit() {
     status: form.status,
   }
   if (!editing.value) data.username = form.username.trim()
+  if (!editing.value) data.password = form.password
   if (props.kind === 'students') data.graduationDate = form.graduationDate || null
   else data.department = form.department.trim()
   // Blank on edit means leave the existing identifier unchanged, never send the mask.
@@ -204,12 +245,72 @@ async function submit() {
     ElMessage.success(`${noun.value}资料已保存，ID：${result.data.id}`)
     visible.value = false
     form.socialSecurityNumber = ''
+    form.password = ''
+    form.passwordConfirm = ''
     await load()
   } catch (e) {
     if (!active) return
     formError.value = e
     showFieldErrors(e)
     if (e instanceof HttpError && [0, 412].includes(e.status)) blocked.value = true
+  } finally {
+    busy.value = false
+  }
+}
+function clearPasswordReset() {
+  resetVisible.value = false
+  resetTarget.value = null
+  resetPasswordValue.value = ''
+  resetPasswordConfirm.value = ''
+  resetError.value = null
+}
+function openPasswordReset(person: PersonRecord) {
+  if (busy.value || listNeedsVerification.value) return
+  resetTarget.value = person
+  resetPasswordValue.value = ''
+  resetPasswordConfirm.value = ''
+  resetError.value = null
+  resetVisible.value = true
+}
+async function submitPasswordReset() {
+  if (busy.value || listNeedsVerification.value || !resetTarget.value) return
+  if (
+    resetPasswordValue.value.length < 12 ||
+    new TextEncoder().encode(resetPasswordValue.value).length > 72
+  ) {
+    resetError.value = new Error('密码至少需要 12 个字符，且不超过 72 个 UTF-8 字节')
+    return
+  }
+  if (resetPasswordValue.value !== resetPasswordConfirm.value) {
+    resetError.value = new Error('两次输入的密码不一致')
+    return
+  }
+  const target = resetTarget.value
+  busy.value = true
+  resetError.value = null
+  try {
+    const result =
+      props.kind === 'students'
+        ? await api.registrar.resetStudentPassword(
+            target.id,
+            resetPasswordValue.value,
+            target.accountVersion,
+          )
+        : await api.registrar.resetProfessorPassword(
+            target.id,
+            resetPasswordValue.value,
+            target.accountVersion,
+          )
+    items.value = items.value.map((person) =>
+      person.id === result.data.id ? { ...person, accountVersion: result.data.accountVersion } : person,
+    )
+    clearPasswordReset()
+    ElMessage.success('登录密码已重置，现有会话已失效')
+  } catch (e) {
+    if (active) {
+      resetError.value = e
+      if (e instanceof HttpError && [0, 412].includes(e.status)) listNeedsVerification.value = true
+    }
   } finally {
     busy.value = false
   }
@@ -255,10 +356,13 @@ watch(
     keyword.value = ''
     error.value = null
     listNeedsVerification.value = false
+    clearPasswordReset()
     if (visible.value) {
       visible.value = false
       editing.value = null
       form.socialSecurityNumber = ''
+      form.password = ''
+      form.passwordConfirm = ''
     }
     void load()
   },
@@ -274,6 +378,9 @@ onUnmounted(() => {
   active = false
   generation++
   form.socialSecurityNumber = ''
+  form.password = ''
+  form.passwordConfirm = ''
+  clearPasswordReset()
   items.value = []
   editing.value = null
   Object.assign(form, {
@@ -284,6 +391,8 @@ onUnmounted(() => {
     graduationDate: null,
     department: '',
     socialSecurityNumber: '',
+    password: '',
+    passwordConfirm: '',
   })
 })
 </script>
@@ -380,7 +489,7 @@ onUnmounted(() => {
           ></el-table-column
         ><el-table-column
           label="操作"
-          width="125"
+          width="210"
           fixed="right"
           ><template #default="{ row }"
             ><el-button
@@ -389,6 +498,12 @@ onUnmounted(() => {
               :disabled="busy || listNeedsVerification"
               @click="edit(row)"
               >编辑</el-button
+            ><el-button
+              link
+              type="primary"
+              :disabled="busy || listNeedsVerification"
+              @click="openPasswordReset(row)"
+              >重置密码</el-button
             ><el-button
               link
               type="danger"
@@ -445,6 +560,34 @@ onUnmounted(() => {
           :model-value="`${editing.id} / ${editing.username || '—'}`"
           disabled
       /></el-form-item>
+      <el-form-item
+        v-if="!editing"
+        label="初始密码"
+        prop="password"
+        :error="fieldErrors.password"
+      >
+        <el-input
+          v-model="form.password"
+          type="password"
+          maxlength="128"
+          autocomplete="new-password"
+          show-password
+        />
+      </el-form-item>
+      <el-form-item
+        v-if="!editing"
+        label="确认初始密码"
+        prop="passwordConfirm"
+        :error="fieldErrors.passwordConfirm"
+      >
+        <el-input
+          v-model="form.passwordConfirm"
+          type="password"
+          maxlength="128"
+          autocomplete="new-password"
+          show-password
+        />
+      </el-form-item>
       <div class="form-grid">
         <el-form-item
           label="姓名"
@@ -514,12 +657,7 @@ onUnmounted(() => {
               : '九位数字或 XXX-XX-XXXX'
           "
       /></el-form-item>
-      <p
-        v-if="!editing"
-        class="tiny muted"
-      >
-        密码由受控初始化流程提供，此页面不生成或展示密码。
-      </p></el-form
+      </el-form
     ><template #footer
       ><el-button
         :disabled="busy"
@@ -534,4 +672,46 @@ onUnmounted(() => {
       ></template
     ></el-dialog
   >
+  <el-dialog
+    v-model="resetVisible"
+    title="重置登录密码"
+    width="min(460px, 94vw)"
+    :close-on-click-modal="false"
+    :show-close="!busy"
+    @closed="clearPasswordReset"
+  >
+    <ErrorNotice :error="resetError" />
+    <el-form label-position="top" @submit.prevent="submitPasswordReset">
+      <el-form-item label="新密码">
+        <el-input
+          v-model="resetPasswordValue"
+          type="password"
+          maxlength="128"
+          autocomplete="new-password"
+          show-password
+          :disabled="busy || listNeedsVerification"
+        />
+      </el-form-item>
+      <el-form-item label="确认新密码">
+        <el-input
+          v-model="resetPasswordConfirm"
+          type="password"
+          maxlength="128"
+          autocomplete="new-password"
+          show-password
+          :disabled="busy || listNeedsVerification"
+        />
+      </el-form-item>
+    </el-form>
+    <template #footer>
+      <el-button :disabled="busy" @click="clearPasswordReset">取消</el-button>
+      <el-button
+        type="primary"
+        :loading="busy"
+        :disabled="listNeedsVerification || !resetPasswordValue || !resetPasswordConfirm"
+        @click="submitPasswordReset"
+        >保存新密码</el-button
+      >
+    </template>
+  </el-dialog>
 </template>

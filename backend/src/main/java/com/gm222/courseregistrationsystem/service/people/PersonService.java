@@ -9,6 +9,7 @@ import com.gm222.courseregistrationsystem.service.audit.AuditService;
 import com.gm222.courseregistrationsystem.service.identity.CurrentActor;
 import com.gm222.courseregistrationsystem.service.identity.SessionRevoker;
 import com.gm222.courseregistrationsystem.web.WebValues;
+import java.nio.charset.StandardCharsets;
 import java.util.*;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -100,10 +101,11 @@ public class PersonService {
             Map.of("u", username))
         > 0) throw BusinessException.conflict("DUPLICATE_USERNAME", "登录账号已存在");
     uniqueSsn(kind, null, c.socialSecurityNumber());
+    validatePassword(c.password());
     var account = new Account();
     account.setEnabled("ACTIVE".equals(c.status()));
     account.setUsername(username);
-    account.setPasswordHash(passwords.encode(UUID.randomUUID().toString()));
+    account.setPasswordHash(passwords.encode(c.password()));
     account.setRole("students".equals(kind) ? "STUDENT" : "PROFESSOR");
     db.persist(account);
     if ("students".equals(kind)) {
@@ -130,6 +132,7 @@ public class PersonService {
     registrar(actor);
     validate(c, kind);
     if (c.username() != null) throw BusinessException.invalid("修改资料不能更改登录账号");
+    if (c.password() != null) throw BusinessException.invalid("密码请通过单独的重置操作修改");
     gates();
     uniqueSsn(kind, id, c.socialSecurityNumber());
     if ("students".equals(kind)) {
@@ -158,6 +161,34 @@ public class PersonService {
     audit.record(actor, "UPDATE_PROFESSOR", "PROFESSOR", id);
     db.flush();
     return new Result<>(professor(p), p.getVersion());
+  }
+
+  @Transactional
+  public Result<Person> resetPassword(
+      CurrentActor actor, String kind, Long id, PasswordCommand command, Long expectedAccountVersion) {
+    registrar(actor);
+    validatePassword(command.password());
+    if ("students".equals(kind)) {
+      var s = db.lock(Student.class, id);
+      if (s.getDeletedAt() != null) throw BusinessException.missing("学生不存在");
+      var account = db.lock(Account.class, s.getAccount().getId());
+      WebValues.match(expectedAccountVersion, account.getVersion());
+      applyPassword(account, command.password());
+      sessions.revoke(account.getUsername());
+      audit.record(actor, "RESET_STUDENT_PASSWORD", "STUDENT", id);
+      db.flush();
+      return new Result<>(student(s), account.getVersion());
+    }
+    if (!"professors".equals(kind)) throw BusinessException.missing("人员类型不存在");
+    var p = db.lock(Professor.class, id);
+    if (p.getDeletedAt() != null) throw BusinessException.missing("教师不存在");
+    var account = db.lock(Account.class, p.getAccount().getId());
+    WebValues.match(expectedAccountVersion, account.getVersion());
+    applyPassword(account, command.password());
+    sessions.revoke(account.getUsername());
+    audit.record(actor, "RESET_PROFESSOR_PASSWORD", "PROFESSOR", id);
+    db.flush();
+    return new Result<>(professor(p), account.getVersion());
   }
 
   @Transactional
@@ -257,6 +288,19 @@ public class PersonService {
       throw BusinessException.invalid("社会安全号码必须为九位数字");
   }
 
+  private void validatePassword(String password) {
+    if (password == null || password.length() < 12)
+      throw BusinessException.invalid("密码至少需要 12 个字符");
+    if (password.getBytes(StandardCharsets.UTF_8).length > 72)
+      throw BusinessException.invalid("密码不得超过 72 个 UTF-8 字节");
+  }
+
+  private void applyPassword(Account account, String password) {
+    account.setPasswordHash(passwords.encode(password));
+    account.setFailedAttempts(0);
+    account.setLockedUntil(null);
+  }
+
   private void apply(Student s, PersonCommand c) {
     s.setName(c.name().strip());
     s.setBirthDate(c.birthDate());
@@ -290,6 +334,7 @@ public class PersonService {
         s.getGraduationDate(),
         null,
         ssn.mask(s.getSsnCiphertext()),
+        s.getAccount().getVersion(),
         s.getVersion());
   }
 
@@ -304,6 +349,7 @@ public class PersonService {
         null,
         p.getDepartment(),
         ssn.mask(p.getSsnCiphertext()),
+        p.getAccount().getVersion(),
         p.getVersion());
   }
 }

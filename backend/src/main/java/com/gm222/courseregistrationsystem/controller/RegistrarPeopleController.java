@@ -55,6 +55,17 @@ public class RegistrarPeopleController {
     return WebValues.versioned(r.data(), r.version());
   }
 
+  @PostMapping("/{kind}/{id}/password")
+  public ResponseEntity<ApiResponse<Person>> resetPassword(
+      @PathVariable String kind,
+      @PathVariable String id,
+      @Valid @RequestBody PasswordCommand body,
+      @RequestHeader(value = "If-Match", required = false) String match) {
+    check(kind);
+    var r = people.resetPassword(auth.current(), kind, WebValues.id(id), body, WebValues.version(match));
+    return WebValues.versioned(r.data(), r.version());
+  }
+
   @DeleteMapping("/{kind}/{id}")
   public ResponseEntity<Void> delete(
       @PathVariable String kind,

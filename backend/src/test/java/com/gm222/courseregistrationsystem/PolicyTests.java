@@ -16,12 +16,22 @@ class PolicyTests {
     var login = new ApiDtos.Login("synthetic-user", "synthetic-private-password");
     var person =
         new ApiDtos.PersonCommand(
-            "synthetic-user", "Synthetic", null, "ACTIVE", null, null, "123456789");
+            "synthetic-user",
+            "Synthetic",
+            null,
+            "ACTIVE",
+            null,
+            null,
+            "123456789",
+            "synthetic-private-password");
+    var password = new ApiDtos.PasswordCommand("synthetic-private-password");
     var entry = new ApiDtos.GradeEntry("1", "A", null);
     var student = new ApiDtos.RosterStudent("1", "2", "Synthetic", "A", 0L);
     var item = new ApiDtos.ReportItem("1", "3", "CS1", "Course", "1", "Synthetic", "A", 0L);
     assertThat(login.toString()).doesNotContain(login.password(), login.username());
-    assertThat(person.toString()).doesNotContain(person.socialSecurityNumber());
+    assertThat(person.toString())
+        .doesNotContain(person.socialSecurityNumber(), person.password());
+    assertThat(password.toString()).doesNotContain(password.password());
     for (var value :
         List.of(
             entry,

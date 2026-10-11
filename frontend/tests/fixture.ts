@@ -98,6 +98,8 @@ export async function setup(page: Page, role = 'STUDENT') {
     closeResult: null as any,
     closeBusy: false,
     closeCount: 0,
+    cutoffCount: 0,
+    passwordResets: [] as { kind: string; id: string; password: string; accountVersion: string | null }[],
     csrfCalls: 0,
     teaching: {
       version: 0,
@@ -277,7 +279,18 @@ export async function setup(page: Page, role = 'STUDENT') {
       graduationDate: null,
       department: '计算机学院',
       ssnMasked: '***-**-0001',
+      accountVersion: 0,
       version: 0,
+    }
+    const passwordPath = path.match(/^\/registrar\/(students|professors)\/(\d+)\/password$/)
+    if (passwordPath && method === 'POST') {
+      state.passwordResets.push({
+        kind: passwordPath[1],
+        id: passwordPath[2],
+        password: body.password,
+        accountVersion: request.headers()['if-match'] || null,
+      })
+      return ok({ ...person, accountVersion: 1 })
     }
     if (/^\/registrar\/(students|professors)/.test(path)) {
       if (method === 'DELETE')
@@ -286,7 +299,9 @@ export async function setup(page: Page, role = 'STUDENT') {
           : route.fulfill({ status: 204 })
       if (method === 'POST' || method === 'PUT') {
         state.newPerson = body
-        return ok({ ...person, ...body, version: 1 })
+        const response = { ...person, ...body, accountVersion: 1, version: 1 }
+        delete response.password
+        return ok(response)
       }
       if (/\/\d+$/.test(path)) return ok(person)
       return ok({ items: [person], page: 1, pageSize: 20, total: 1 })
@@ -295,6 +310,17 @@ export async function setup(page: Page, role = 'STUDENT') {
       return state.closeResult
         ? ok(state.closeResult)
         : fail(404, 'REGISTRATION_NOT_CLOSED', '注册尚未关闭')
+    if (path.endsWith('/registration-deadline') && method === 'PUT') {
+      state.semesters[0].addDropEnd = body.addDropEnd
+      state.semesters[0].version++
+      return ok(state.semesters[0])
+    }
+    if (path.endsWith('/cutoff') && method === 'POST') {
+      state.cutoffCount++
+      state.semesters[0].addDropEnd = new Date().toISOString()
+      state.semesters[0].version++
+      return ok(state.semesters[0])
+    }
     if (path.endsWith('/close')) {
       state.closeCount++
       if (state.closeBusy) return fail(409, 'REGISTRATION_BUSY', '有注册变更正在处理，请稍后重试')
