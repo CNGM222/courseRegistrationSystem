@@ -1,0 +1,19 @@
+[Unit]
+Description=Course Registration Backend
+After=network.target docker.service
+
+[Service]
+Type=simple
+User=courseapp
+Group=courseapp
+WorkingDirectory=/srv/course-registration
+EnvironmentFile=/etc/course-registration/backend.env
+ExecStart=/usr/bin/java -jar /srv/course-registration/backend.jar --debug=false
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
