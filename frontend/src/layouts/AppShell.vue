@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
@@ -18,7 +18,13 @@ import { label, errorMessage } from '../utils/format'
 const route = useRoute(),
   router = useRouter(),
   auth = useAuthStore(),
-  drawer = ref(false)
+  drawer = ref(false),
+  mainPanel = ref<HTMLElement | null>(null)
+watch(
+  () => route.fullPath,
+  () => mainPanel.value?.scrollTo({ top: 0 }),
+  { flush: 'post' },
+)
 const links = computed(() => {
   const common = [{ label: '课程目录', to: '/catalog', icon: Reading }]
   if (auth.user?.role === 'STUDENT')
@@ -82,7 +88,6 @@ async function logout() {
           ><el-icon><component :is="item.icon" /></el-icon>{{ item.label }}</router-link
         >
       </nav>
-      <div class="nav-spacer" />
       <div class="user-mini">
         <span class="avatar">{{ auth.user?.displayName?.slice(0, 1) }}</span
         ><span
@@ -97,7 +102,10 @@ async function logout() {
         ></el-button>
       </div>
     </aside>
-    <main class="main-panel">
+    <main
+      ref="mainPanel"
+      class="main-panel"
+    >
       <header class="top-bar">
         <span class="breadcrumb"
           ><el-button
