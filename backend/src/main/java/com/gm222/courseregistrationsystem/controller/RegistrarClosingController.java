@@ -82,4 +82,12 @@ public class RegistrarClosingController {
     return ApiResponse.of(
         billing.events(auth.current(), WebValues.id(semesterId), page, pageSize, state));
   }
+
+  @GetMapping("/students/{studentId}/invoice")
+  public ResponseEntity<ApiResponse<Invoice>> invoice(
+      @PathVariable String semesterId, @PathVariable String studentId) {
+    var result = billing.forStudent(
+        auth.current(), WebValues.id(semesterId), WebValues.id(studentId));
+    return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(ApiResponse.of(result));
+  }
 }

@@ -1,6 +1,9 @@
 package com.gm222.courseregistrationsystem;
 
 import static org.assertj.core.api.Assertions.*;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 import com.gm222.courseregistrationsystem.exception.BusinessException;
 import com.gm222.courseregistrationsystem.model.dto.ApiDtos.*;
@@ -8,6 +11,7 @@ import com.gm222.courseregistrationsystem.model.entity.*;
 import com.gm222.courseregistrationsystem.repository.BusinessStore;
 import com.gm222.courseregistrationsystem.service.BusinessTime;
 import com.gm222.courseregistrationsystem.service.billing.OutboxDispatcher;
+import com.gm222.courseregistrationsystem.service.billing.BillingQueryService;
 import com.gm222.courseregistrationsystem.service.catalog.*;
 import com.gm222.courseregistrationsystem.service.closing.RegistrationCloseService;
 import com.gm222.courseregistrationsystem.service.grading.*;
@@ -24,13 +28,18 @@ import javax.sql.DataSource;
 import org.junit.jupiter.api.*;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.test.web.servlet.MockMvc;
 
 @SpringBootTest
 @ActiveProfiles("test")
+@AutoConfigureMockMvc
 class BusinessWorkflowTests {
   @Autowired BusinessStore db;
   @Autowired PlatformTransactionManager manager;
@@ -46,6 +55,8 @@ class BusinessWorkflowTests {
   @Autowired PasswordEncoder passwords;
   @Autowired CatalogQueryService catalog;
   @Autowired OutboxDispatcher outbox;
+  @Autowired BillingQueryService billing;
+  @Autowired MockMvc mvc;
   @Autowired DataSource datasource;
   TransactionTemplate tx;
   Fixture f;
@@ -261,6 +272,12 @@ class BusinessWorkflowTests {
         .isEqualByComparingTo("0.00");
     assertThatThrownBy(() -> schedules.saveDraft(f.student, f.semester, draft(0), null))
         .isInstanceOf(BusinessException.class);
+    var invoice = billing.mine(f.student, f.semester);
+    assertThat(invoice.totalAmount()).isEqualTo("0.00");
+    assertThat(invoice.items()).isEmpty();
+    assertThat(invoice.deliveryState()).isEqualTo("PENDING");
+    assertThat(billing.forStudent(f.registrar, f.semester, f.student.personId()))
+        .isEqualTo(invoice);
   }
 
   @Test
@@ -305,6 +322,62 @@ class BusinessWorkflowTests {
     var r = close.close(f.registrar, f.semester);
     assertThat(r.billingEvents()).isZero();
     assertThat(schedules.get(f.student, f.semester).status()).isEqualTo("EXPIRED");
+    assertThatThrownBy(() -> billing.mine(f.student, f.semester))
+        .isInstanceOf(BusinessException.class)
+        .extracting("code")
+        .isEqualTo("INVOICE_NOT_FOUND");
+  }
+
+  @Test
+  void invoicesAreNotReadyBeforeFinalClosureEvenAfterCutoff() {
+    submitted();
+    expired();
+    assertThatThrownBy(() -> billing.mine(f.student, f.semester))
+        .isInstanceOf(BusinessException.class)
+        .extracting("code")
+        .isEqualTo("INVOICE_NOT_READY");
+  }
+
+  @Test
+  void invoiceHttpEndpointsEnforceOwnershipRolesAndNoStore() throws Exception {
+    submitted();
+    expired();
+    close.close(f.registrar, f.semester);
+    var studentAuth = new UsernamePasswordAuthenticationToken(
+        f.student, null, List.of(new SimpleGrantedAuthority("ROLE_STUDENT")));
+    var registrarAuth = new UsernamePasswordAuthenticationToken(
+        f.registrar, null, List.of(new SimpleGrantedAuthority("ROLE_REGISTRAR")));
+    var professorAuth = new UsernamePasswordAuthenticationToken(
+        f.professor, null, List.of(new SimpleGrantedAuthority("ROLE_PROFESSOR")));
+    String mine = "/api/v1/students/me/invoices/" + f.semester;
+    String registrar = "/api/v1/registrar/semesters/" + f.semester
+        + "/students/" + f.student.personId() + "/invoice";
+    mvc.perform(get(mine)).andExpect(status().isUnauthorized());
+    mvc.perform(get(mine).with(authentication(studentAuth)))
+        .andExpect(status().isOk())
+        .andExpect(header().string("Cache-Control", "no-store"))
+        .andExpect(jsonPath("$.data.studentId").value(f.student.personId().toString()))
+        .andExpect(jsonPath("$.data.totalAmount").value("0.00"))
+        .andExpect(jsonPath("$.data.currency").value("CNY"))
+        .andExpect(jsonPath("$.data.items").isEmpty());
+    mvc.perform(get(registrar).with(authentication(registrarAuth)))
+        .andExpect(status().isOk())
+        .andExpect(header().string("Cache-Control", "no-store"));
+    mvc.perform(get(registrar).with(authentication(studentAuth)))
+        .andExpect(status().isForbidden());
+    mvc.perform(get(mine).with(authentication(professorAuth)))
+        .andExpect(status().isForbidden());
+    var other = tx.execute(status -> anotherStudent());
+    var otherAuth = new UsernamePasswordAuthenticationToken(
+        other, null, List.of(new SimpleGrantedAuthority("ROLE_STUDENT")));
+    mvc.perform(get(mine).with(authentication(otherAuth)))
+        .andExpect(status().isNotFound())
+        .andExpect(jsonPath("$.code").value("INVOICE_NOT_FOUND"));
+    var forged = new CurrentActor(f.student.actorId(), "STUDENT", other.personId(), "", "");
+    assertThatThrownBy(() -> billing.mine(forged, f.semester))
+        .isInstanceOf(BusinessException.class)
+        .extracting("status")
+        .isEqualTo(403);
   }
 
   @Test
@@ -739,6 +812,25 @@ class BusinessWorkflowTests {
                         .orElseThrow()
                         .getTotalAmount()))
         .isEqualByComparingTo("2400.00");
+    var invoice = billing.mine(f.student, f.semester);
+    assertThat(invoice.totalAmount()).isEqualTo("2400.00");
+    assertThat(invoice.items()).extracting(InvoiceItem::offeringId)
+        .containsExactlyInAnyOrder(
+            f.offerings.get(1).toString(), f.offerings.get(2).toString(),
+            f.offerings.get(3).toString(), f.offerings.get(4).toString());
+    // Catalog edits must not change the frozen amount or course description.
+    tx.executeWithoutResult(status -> {
+      var offering = db.get(CourseOffering.class, f.offerings.get(1));
+      offering.setTuition(new BigDecimal("999.00"));
+      offering.getCourse().setName("目录已改名");
+      db.first(OutboxEvent.class,
+          "select e from OutboxEvent e where e.invoice.id=:i", Map.of("i", Long.valueOf(invoice.id())))
+          .orElseThrow().setState("RETRY");
+    });
+    var refreshed = billing.mine(f.student, f.semester);
+    assertThat(refreshed.totalAmount()).isEqualTo("2400.00");
+    assertThat(refreshed.items()).isEqualTo(invoice.items());
+    assertThat(refreshed.deliveryState()).isEqualTo("RETRY");
   }
 
   @Test

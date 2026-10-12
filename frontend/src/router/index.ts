@@ -45,6 +45,11 @@ const router = createRouter({
           meta: { roles: ['STUDENT'], title: '选课历史' },
         },
         {
+          path: 'student/billing',
+          component: () => import('../views/student/StudentBillingView.vue'),
+          meta: { roles: ['STUDENT'], title: '我的账单' },
+        },
+        {
           path: 'student/report-card',
           component: () => import('../views/student/StudentReportCardView.vue'),
           meta: { roles: ['STUDENT'], title: '成绩单' },

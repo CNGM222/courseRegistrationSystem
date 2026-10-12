@@ -6,6 +6,7 @@ import {
   Reading,
   Calendar,
   Document,
+  Wallet,
   School,
   List,
   User,
@@ -33,6 +34,7 @@ const links = computed(() => {
       { label: '当前课表', to: '/student/schedule', icon: Calendar },
       { label: '选课历史', to: '/student/history', icon: List },
       { label: '成绩单', to: '/student/report-card', icon: Document },
+      { label: '我的账单', to: '/student/billing', icon: Wallet },
       ...common,
     ]
   if (auth.user?.role === 'PROFESSOR')

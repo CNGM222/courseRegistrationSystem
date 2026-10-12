@@ -235,6 +235,27 @@ public final class ApiDtos {
       Map<String, Object> summary,
       List<ClosedOffering> offerings) {}
 
+  public record InvoiceItem(
+      String offeringId,
+      String courseCode,
+      String courseName,
+      String sectionCode,
+      String professorName,
+      String amount) {}
+
+  public record Invoice(
+      String id,
+      String semesterId,
+      String semesterName,
+      String studentId,
+      String studentName,
+      String totalAmount,
+      String currency,
+      String createdAt,
+      String deliveryState,
+      String deliveredAt,
+      List<InvoiceItem> items) {}
+
   public record BillingEvent(
       String eventId,
       String studentId,

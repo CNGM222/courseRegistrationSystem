@@ -4,6 +4,7 @@ import type {
   CloseResult,
   CurrentUser,
   GradeValue,
+  Invoice,
   Offering,
   PageResult,
   PersonRecord,
@@ -48,6 +49,8 @@ export const api = {
       ),
   },
   student: {
+    invoice: (semesterId: string) =>
+      request<Invoice>(`/students/me/invoices/${encodeURIComponent(semesterId)}`),
     schedule: (semesterId: string) => request<Schedule>(`/students/me/schedules/${semesterId}`),
     saveDraft: (
       semesterId: string,
@@ -100,6 +103,10 @@ export const api = {
       }),
   },
   registrar: {
+    invoice: (semesterId: string, studentId: string) =>
+      request<Invoice>(
+        `/registrar/semesters/${encodeURIComponent(semesterId)}/students/${encodeURIComponent(studentId)}/invoice`,
+      ),
     updateRegistrationDeadline: (semesterId: string, addDropEnd: string, version: number) =>
       request<Semester>(`/registrar/semesters/${semesterId}/registration-deadline`, {
         method: 'PUT',

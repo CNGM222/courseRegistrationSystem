@@ -10,13 +10,14 @@
 
 - 后端：`backend/target/backend-0.0.1-SNAPSHOT.jar`，按 Java 21 编译。
 - 前端：`frontend/dist/`，包含 `index.html` 和 `assets/`。
-- 后端 H2 测试共 39 项，38 项通过，MySQL 专用 NOWAIT 测试跳过。
-- 编译后 JAR 使用 `demo` profile 启动，`GET /api/v1/auth/csrf` 返回 HTTP 200。
+- 包含学生“我的账单”和教务员“查看账单”修复，前后端需同时更新。
+- 同版本后端 H2 测试共 41 项，40 项通过，MySQL 专用 NOWAIT 测试跳过；33 项浏览器回归测试通过。
+- 同版本编译后 JAR 已用本机 MySQL 9.6 验证学生账单查询和教务账单详情。
 - 本次没有连接目标服务器，也没有验证服务器上的 MySQL、域名或 HTTPS。
 
-本地 JAR 自检使用了 H2；下面服务器部署使用 MySQL 配置，需在服务器上完成数据库与登录验证。
+下面服务器部署使用 MySQL 配置，需在服务器上完成数据库与登录验证。
 
-本次上传包位于 `.local/server-release/course-registration-20261012.zip`。包内有 `backend.jar`、`frontend/`、`database/`、`deploy/`、`backend-README.md` 和本教程，不包含本机数据库备份、真实密码、密钥、`node_modules` 或源码。数据库演示脚本含公开的合成账号。不要上传 `.jar.original`，它不是可独立启动的完整包。
+本次上传包位于 `.local/server-release/course-registration-20261012.zip`。包内有 `backend.jar`、`frontend/`、`database/`、`deploy/`、`backend-README.md`、本教程、`RELEASE_NOTES.md` 和 `SHA256SUMS`，不包含本机数据库备份、真实密码、密钥、`node_modules` 或源码。数据库演示脚本含公开的合成账号。不要上传 `.jar.original`，它不是可独立启动的完整包。
 
 以后修改代码，在本机项目根目录重新构建：
 

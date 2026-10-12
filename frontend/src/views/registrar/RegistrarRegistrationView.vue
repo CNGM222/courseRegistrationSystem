@@ -5,10 +5,11 @@ import { api } from '../../services/api'
 import { HttpError } from '../../services/http'
 import { useSemesters } from '../../composables/useSemesters'
 import { dateTime, label } from '../../utils/format'
-import type { CloseResult, BillingEvent, RegistrarRoster } from '../../types/api'
+import type { CloseResult, BillingEvent, Invoice, RegistrarRoster } from '../../types/api'
 import ErrorNotice from '../../components/ErrorNotice.vue'
 import SemesterSelect from '../../components/SemesterSelect.vue'
 import EmptyState from '../../components/EmptyState.vue'
+import InvoiceDetail from '../../components/InvoiceDetail.vue'
 const {
   choices,
   selectedId,
@@ -47,6 +48,41 @@ const rosterVisible = ref(false),
   rosterError = ref<unknown>(null),
   rosterOfferingId = ref(''),
   rosterTitle = ref('')
+const invoiceVisible = ref(false),
+  invoice = ref<Invoice | null>(null),
+  invoiceStudentId = ref(''),
+  invoiceLoading = ref(false),
+  invoiceError = ref<unknown>(null)
+let invoiceGeneration = 0
+function clearInvoice() {
+  invoiceGeneration++
+  invoiceVisible.value = false
+  invoice.value = null
+  invoiceStudentId.value = ''
+  invoiceLoading.value = false
+  invoiceError.value = null
+}
+async function loadInvoice() {
+  if (!active || !invoiceVisible.value || !selectedId.value || !invoiceStudentId.value) return
+  const token = ++invoiceGeneration
+  invoice.value = null
+  invoiceError.value = null
+  invoiceLoading.value = true
+  try {
+    const { data } = await api.registrar.invoice(selectedId.value, invoiceStudentId.value)
+    if (token === invoiceGeneration) invoice.value = data
+  } catch (e) {
+    if (token === invoiceGeneration) invoiceError.value = e
+  } finally {
+    if (token === invoiceGeneration) invoiceLoading.value = false
+  }
+}
+function openInvoice(event: BillingEvent) {
+  clearInvoice()
+  invoiceStudentId.value = event.studentId
+  invoiceVisible.value = true
+  void loadInvoice()
+}
 const canClose = computed(
   () =>
     verified.value &&
@@ -315,6 +351,7 @@ async function close() {
   }
 }
 watch(selectedId, () => {
+  clearInvoice()
   clearRoster()
   result.value = null
   events.value = []
@@ -350,6 +387,7 @@ onMounted(() => {
 })
 onUnmounted(() => {
   active = false
+  clearInvoice()
   generation++
   billingGeneration++
   clearInterval(timer)
@@ -594,7 +632,7 @@ onUnmounted(() => {
   >
     <div class="surface-header">
       <div>
-        <strong>财务通知</strong>
+        <strong>账单与财务通知</strong>
         <p
           class="tiny muted"
           style="margin: 6px 0 0"
@@ -665,7 +703,20 @@ onUnmounted(() => {
           label="错误摘要"
           min-width="200"
           ><template #default="{ row }">{{ row.lastError || '—' }}</template></el-table-column
-        ></el-table
+        ><el-table-column
+          label="账单"
+          width="110"
+          fixed="right"
+        >
+          <template #default="{ row }">
+            <el-button
+              link
+              type="primary"
+              @click="openInvoice(row)"
+              >查看账单</el-button
+            >
+          </template>
+        </el-table-column></el-table
       ><el-pagination
         v-model:current-page="page"
         :page-size="20"
@@ -677,6 +728,36 @@ onUnmounted(() => {
       />
     </div>
   </section>
+  <el-dialog
+    v-model="invoiceVisible"
+    title="学费账单"
+    width="min(800px, 94vw)"
+    destroy-on-close
+    @close="clearInvoice"
+  >
+    <ErrorNotice
+      :error="invoiceError"
+      retry
+      @retry="loadInvoice"
+    />
+    <el-skeleton
+      v-if="invoiceLoading"
+      :rows="5"
+      animated
+    />
+    <InvoiceDetail
+      v-else-if="invoice && !invoiceError"
+      :invoice="invoice"
+    />
+    <template #footer>
+      <el-button
+        :loading="invoiceLoading"
+        @click="loadInvoice"
+        >刷新账单</el-button
+      >
+      <el-button @click="clearInvoice">关闭</el-button>
+    </template>
+  </el-dialog>
   <el-dialog
     v-model="rosterVisible"
     :title="rosterTitle"

@@ -200,6 +200,27 @@ export interface CloseResult {
   }[]
 }
 
+export interface Invoice {
+  id: string
+  semesterId: string
+  semesterName: string
+  studentId: string
+  studentName: string
+  totalAmount: string
+  currency: string
+  createdAt: string
+  deliveryState: BillingEvent['state'] | null
+  deliveredAt: string | null
+  items: {
+    offeringId: string
+    courseCode: string
+    courseName: string
+    sectionCode: string
+    professorName: string
+    amount: string
+  }[]
+}
+
 export interface BillingEvent {
   eventId: string
   studentId: string
